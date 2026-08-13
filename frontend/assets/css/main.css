@@ -1,0 +1,26 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+}
+
+html, body, #__nuxt {
+  height: 100%;
+}
+
+body {
+  @apply bg-slate-50 text-slate-900 antialiased;
+  /* font-feature-settings only for Inter Latin glyphs; CJK fonts ignore these */
+  font-feature-settings: 'cv11', 'ss01', 'ss03';
+  /* Improve CJK rendering */
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+/* Ensure CJK characters always use an appropriate font */
+:lang(zh), :lang(zh-Hant), :lang(zh-TW) {
+  font-family: 'Noto Sans TC', 'PingFang TC', 'Microsoft JhengHei', '微軟正黑體', sans-serif;
+}

@@ -1,0 +1,231 @@
+{
+  "tables": {
+    "departments": {
+      "category": "組織",
+      "description": "公司部門主檔。",
+      "columns": {
+        "id": "部門流水號",
+        "name": "部門名稱",
+        "manager_id": "部門主管，對應 employees.id",
+        "budget": "年度預算（新台幣）",
+        "location": "辦公地點"
+      }
+    },
+    "employees": {
+      "category": "組織",
+      "description": "員工主檔。",
+      "columns": {
+        "id": "員工流水號",
+        "name": "員工姓名",
+        "dept_id": "所屬部門，對應 departments.id",
+        "title": "職稱",
+        "salary": "月薪（新台幣）",
+        "hire_date": "到職日",
+        "email": "公司 Email",
+        "is_active": "在職狀態（1=在職, 0=離職）"
+      }
+    },
+    "categories": {
+      "category": "商品",
+      "description": "商品分類主檔；支援多層分類。",
+      "columns": {
+        "id": "分類流水號",
+        "name": "分類名稱（顯示用）",
+        "parent_id": "上層分類；NULL 代表頂層",
+        "description": "分類說明"
+      }
+    },
+    "suppliers": {
+      "category": "供應鏈",
+      "description": "供應商主檔。",
+      "columns": {
+        "id": "供應商流水號",
+        "name": "供應商名稱",
+        "contact_name": "聯絡人姓名",
+        "phone": "聯絡電話",
+        "email": "聯絡 Email",
+        "country": "來源國",
+        "rating": "評等（1~5）",
+        "is_active": "是否啟用（1=啟用）"
+      }
+    },
+    "products": {
+      "category": "商品",
+      "description": "商品主檔，含定價、庫存與分類關聯。",
+      "columns": {
+        "id": "商品流水號",
+        "sku": "商品料號（對外唯一）",
+        "name": "商品名稱",
+        "category_id": "所屬分類，對應 categories.id",
+        "supplier_id": "供應商，對應 suppliers.id",
+        "price": "售價（新台幣）",
+        "cost": "成本（新台幣）",
+        "stock": "目前庫存數量",
+        "reorder_point": "安全庫存門檻；低於此值要補貨",
+        "is_active": "是否上架（1=上架, 0=下架）",
+        "created_at": "建立時間"
+      }
+    },
+    "customers": {
+      "category": "客戶",
+      "description": "客戶主檔，含等級與基本資料。",
+      "columns": {
+        "id": "客戶流水號",
+        "name": "客戶姓名",
+        "email": "聯絡 Email",
+        "phone": "聯絡電話",
+        "gender": "性別（M/F）",
+        "birth_date": "生日",
+        "city": "居住城市",
+        "tier": "會員等級（regular / silver / gold / vip）",
+        "total_spent": "累積消費金額（新台幣）",
+        "created_at": "註冊時間"
+      }
+    },
+    "customer_addresses": {
+      "category": "客戶",
+      "description": "客戶寄送地址；一個客戶可有多筆地址。",
+      "columns": {
+        "id": "地址流水號",
+        "customer_id": "客戶，對應 customers.id",
+        "label": "地址類型（home/work/other）",
+        "city": "城市",
+        "district": "行政區",
+        "address": "詳細地址",
+        "is_default": "是否為預設地址（1=是）"
+      }
+    },
+    "promotions": {
+      "category": "行銷",
+      "description": "促銷活動定義（折扣碼 / 滿減 / 折扣率）。",
+      "columns": {
+        "id": "活動流水號",
+        "code": "活動代碼（給客戶輸入）",
+        "description": "活動說明",
+        "discount_type": "折扣類型（percent=百分比折扣, fixed=固定折抵金額）",
+        "discount_value": "折扣數值（percent 時為百分比數字，fixed 時為折抵元數）",
+        "min_order_amt": "最低訂單金額才可使用",
+        "max_uses": "最大使用次數上限",
+        "used_count": "已使用次數",
+        "start_date": "活動起始日期",
+        "end_date": "活動結束日期",
+        "is_active": "是否啟用（1=啟用）"
+      }
+    },
+    "orders": {
+      "category": "銷售",
+      "description": "訂單主檔（一筆訂單一列）；明細在 order_items。",
+      "columns": {
+        "id": "訂單流水號",
+        "customer_id": "下單客戶，對應 customers.id",
+        "status": "訂單狀態（completed / shipped / processing / cancelled）",
+        "payment_method": "付款方式（信用卡 / LINE Pay / 街口支付 / 超商取貨付款 / ATM轉帳）",
+        "shipping_city": "寄送城市",
+        "promotion_id": "套用的促銷活動，對應 promotions.id",
+        "subtotal": "商品小計（未折扣）",
+        "discount_amt": "折扣金額",
+        "total": "訂單總金額（subtotal - discount_amt）",
+        "ordered_at": "下單時間（TEXT, 格式 YYYY-MM-DD HH:MM:SS）",
+        "shipped_at": "出貨時間",
+        "delivered_at": "送達時間"
+      }
+    },
+    "order_items": {
+      "category": "銷售",
+      "description": "訂單明細；每張訂單可有多列商品。",
+      "columns": {
+        "id": "明細流水號",
+        "order_id": "訂單，對應 orders.id",
+        "product_id": "商品，對應 products.id",
+        "quantity": "購買數量",
+        "unit_price": "成交單價",
+        "subtotal": "小計（quantity × unit_price）"
+      }
+    },
+    "inventory_transactions": {
+      "category": "庫存",
+      "description": "庫存異動明細（入庫 / 出庫 / 退貨 / 盤點）。",
+      "columns": {
+        "id": "異動流水號",
+        "product_id": "商品，對應 products.id",
+        "txn_type": "異動類型（purchase=入庫補貨, sale=出庫, return=退貨, adjustment=盤點調整）",
+        "qty_change": "異動量（正=入庫，負=出庫）",
+        "note": "異動備註",
+        "created_by": "操作員工，對應 employees.id",
+        "created_at": "異動時間"
+      }
+    },
+    "product_reviews": {
+      "category": "商品",
+      "description": "商品評論；一個商品可被多個客戶評論。",
+      "columns": {
+        "id": "評論流水號",
+        "product_id": "商品，對應 products.id",
+        "customer_id": "評論者，對應 customers.id",
+        "rating": "星等（1~5）",
+        "title": "評論標題",
+        "body": "評論內文",
+        "is_verified": "是否已驗證購買（1=是）",
+        "created_at": "評論時間"
+      }
+    },
+    "sales_targets": {
+      "category": "營運",
+      "description": "各部門季度業績目標與實績。",
+      "columns": {
+        "id": "記錄流水號",
+        "dept_id": "部門，對應 departments.id",
+        "year": "年度（YYYY）",
+        "quarter": "季度（1~4）",
+        "target_amt": "目標金額（新台幣）",
+        "actual_amt": "實際金額（新台幣）",
+        "target_orders": "目標訂單數",
+        "actual_orders": "實際訂單數"
+      }
+    },
+    "support_tickets": {
+      "category": "客服",
+      "description": "客服工單。",
+      "columns": {
+        "id": "工單流水號",
+        "customer_id": "提單客戶，對應 customers.id",
+        "order_id": "關聯訂單，對應 orders.id",
+        "category": "工單類別（refund / damage / delay / inquiry / other）",
+        "priority": "優先級（low / medium / high）",
+        "status": "處理狀態（open / in_progress / resolved / closed）",
+        "subject": "工單主旨",
+        "assigned_to": "負責客服，對應 employees.id",
+        "created_at": "建立時間",
+        "resolved_at": "結案時間"
+      }
+    },
+    "promotion_usage": {
+      "category": "行銷",
+      "description": "促銷活動使用紀錄；每張用到該活動的訂單插入一筆。",
+      "columns": {
+        "id": "流水號",
+        "promotion_id": "活動，對應 promotions.id",
+        "order_id": "訂單，對應 orders.id",
+        "customer_id": "客戶，對應 customers.id",
+        "used_at": "使用時間"
+      }
+    }
+  },
+  "metrics": {
+    "GMV (Gross Merchandise Value)": "成交總金額。SUM(orders.total) WHERE status NOT IN ('cancelled')。",
+    "AOV (Average Order Value)": "平均客單價。GMV / 訂單數。",
+    "退單率": "cancelled 訂單數 / 總訂單數，通常按月計算。",
+    "活躍客戶數": "近 90 天有下過單的不重複 customers.id 數。",
+    "新客比例": "本期首次下單客戶 / 本期下單客戶總數。",
+    "庫存週轉天數": "平均庫存 / (期間銷售量 / 天數)。",
+    "業績達成率": "實際銷售 / sales_targets.target_amt。"
+  },
+  "glossary": {
+    "tier（客戶等級）": "會員等級。regular → silver → gold → vip；依累積消費升等。",
+    "ordered_at": "訂單下單時間；orders 表的日期欄位，格式為 YYYY-MM-DD HH:MM:SS。日期篩選請用 substr(ordered_at,1,7) 取年月，或 DATE(ordered_at) 取日期部分。",
+    "reorder_point": "安全庫存門檻；當 products.stock 低於此值，採購應啟動補貨。",
+    "status (orders)": "訂單狀態流：processing → shipped → completed；任何階段可轉為 cancelled。有效訂單 = status NOT IN ('cancelled')。",
+    "promotion code": "促銷活動代碼，客戶下單時可輸入折抵；對應 promotions.code。",
+    "txn_type (inventory)": "庫存異動類型：purchase=入庫補貨、sale=銷售出庫、return=退貨、adjustment=盤點調整。"
+  }
+}

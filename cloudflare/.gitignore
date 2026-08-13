@@ -1,0 +1,13 @@
+node_modules/
+.wrangler/
+.wrangler-test/
+.wrangler-config/
+.xdg-config/
+.dev.vars
+.dev.vars.*
+!.dev.vars.example
+test-results/
+.playwright-browsers/
+playwright-report/
+.ui-test.*.log
+.worker-*.log

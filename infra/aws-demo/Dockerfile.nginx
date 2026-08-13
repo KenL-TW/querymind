@@ -1,0 +1,25 @@
+# syntax=docker/dockerfile:1
+
+FROM node:20-alpine AS frontend_builder
+
+WORKDIR /frontend
+
+COPY frontend/package*.json ./
+RUN npm ci
+
+COPY frontend/ ./
+
+# Empty means the SPA calls /v1 and /health on the same Nginx origin.
+ARG NUXT_PUBLIC_API_BASE=
+ENV NUXT_PUBLIC_API_BASE=${NUXT_PUBLIC_API_BASE}
+
+RUN npm run generate
+
+
+FROM nginx:1.27-alpine
+
+COPY infra/aws-demo/nginx/nginx.conf /etc/nginx/nginx.conf
+COPY --from=frontend_builder /frontend/.output/public /usr/share/nginx/html
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD wget -qO- http://localhost/health >/dev/null || exit 1

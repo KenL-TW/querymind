@@ -1,0 +1,76 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: querymind-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-qm_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env.aws-demo}
+      POSTGRES_DB: ${QUERYMIND_APP_DB:-querymind}
+      QUERYMIND_APP_DB: ${QUERYMIND_APP_DB:-querymind}
+      QUERYMIND_META_DB: ${QUERYMIND_META_DB:-querymind_meta}
+    volumes:
+      - ${QUERYMIND_DATA_ROOT:-/mnt/querymind}/postgres-data:/var/lib/postgresql/data
+      - ./postgres/initdb:/docker-entrypoint-initdb.d:ro
+    networks:
+      - querymind-internal
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build:
+      context: ../..
+      dockerfile: infra/docker/Dockerfile
+    image: querymind-api:aws-demo
+    container_name: querymind-api
+    env_file:
+      - ${QUERYMIND_ENV_FILE:-.env.aws-demo}
+    environment:
+      ENVIRONMENT: production
+      ENV: production
+      API_PORT: 8080
+      AUTH_ENABLED: "true"
+      STORAGE_BACKEND: local
+      LOCAL_STORAGE_PATH: /app/storage
+      SCHEDULER_BACKEND: apscheduler
+      METADATA_DB_URL: postgresql+psycopg2://${POSTGRES_USER:-qm_user}:${POSTGRES_PASSWORD}@postgres:5432/${QUERYMIND_META_DB:-querymind_meta}
+      DB_CONNECTIONS: '{"default":"postgresql+psycopg2://${POSTGRES_USER:-qm_user}:${POSTGRES_PASSWORD}@postgres:5432/${QUERYMIND_APP_DB:-querymind}"}'
+      CORS_ORIGINS: '["http://${PUBLIC_HOST:-localhost}"]'
+    volumes:
+      - ${QUERYMIND_DATA_ROOT:-/mnt/querymind}/app-data:/app/data
+      - ${QUERYMIND_DATA_ROOT:-/mnt/querymind}/storage:/app/storage
+    networks:
+      - querymind-internal
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  nginx:
+    build:
+      context: ../..
+      dockerfile: infra/aws-demo/Dockerfile.nginx
+      args:
+        NUXT_PUBLIC_API_BASE: ${NUXT_PUBLIC_API_BASE:-}
+    image: querymind-nginx:aws-demo
+    container_name: querymind-nginx
+    ports:
+      - "80:80"
+    networks:
+      - querymind-internal
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
+networks:
+  querymind-internal:
+    driver: bridge

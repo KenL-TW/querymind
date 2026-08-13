@@ -1,0 +1,41 @@
+version: "3.9"
+
+services:
+  querymind-api:
+    build:
+      context: ../..
+      dockerfile: infra/docker/Dockerfile
+    image: querymind:latest
+    container_name: querymind-api
+    ports:
+      - "8101:8101"
+    env_file:
+      - ../../.env.local
+    volumes:
+      - qm-data:/app/data
+      - qm-storage:/app/storage
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8101/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  querymind-ui:
+    image: querymind:latest
+    container_name: querymind-ui
+    command: streamlit run ui/chatbot.py --server.port 8502 --server.address 0.0.0.0
+    ports:
+      - "8502:8502"
+    env_file:
+      - ../../.env.local
+    environment:
+      - API_BASE=http://querymind-api:8101
+    depends_on:
+      querymind-api:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  qm-data:
+  qm-storage:

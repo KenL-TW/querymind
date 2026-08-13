@@ -1,0 +1,43 @@
+# Secrets and local runtime configuration
+.env
+.env.*
+!.env.local.example
+!.env.production.example
+**/.dev.vars
+**/.dev.vars.*
+!**/.dev.vars.example
+
+# Dependencies, caches, and local runtimes
+**/node_modules/
+**/.wrangler/
+**/.wrangler-test/
+**/.wrangler-config/
+**/.xdg-config/
+**/.playwright-browsers/
+**/playwright-report/
+**/test-results/
+**/*.cpuprofile
+**/.qa/
+.venv/
+.venv*/
+**/__pycache__/
+*.py[cod]
+*.db
+*.db-*
+*.sqlite
+*.sqlite-*
+
+# Logs, process state, and local diagnostics
+*.log
+*.pid
+.uv.err
+.uv.out
+cloudflare/.ui-test.*
+cloudflare/.worker-*
+frontend/127.0.0.1/
+
+# Backups and generated exports may contain application or business data.
+backups/
+outputs/
+cloudflare/migration-input/
+cloudflare/migration-output/

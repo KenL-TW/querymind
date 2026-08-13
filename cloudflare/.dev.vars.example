@@ -1,0 +1,10 @@
+# Local development only. Copy this file to .dev.vars before running locally.
+# Never place production secrets in this repository.
+ENVIRONMENT=local
+AI_MOCK_MODE=true
+AUTH_JWT_SECRET=replace-with-a-long-random-local-only-value
+AUTH_BOOTSTRAP_TOKEN=replace-with-a-separate-local-only-value
+AUTH_PASSWORD_PEPPER=replace-with-a-third-long-random-local-only-value
+# This is a Cloudflare AI Gateway token, never an OpenAI provider key.
+# The optional BYOK alias itself belongs in wrangler.jsonc, not in this secret file.
+AI_GATEWAY_TOKEN=replace-with-a-local-only-gateway-token

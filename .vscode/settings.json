@@ -1,0 +1,8 @@
+{
+  "eslint.workingDirectories": [{ "pattern": "frontend" }],
+  "eslint.validate": ["javascript", "typescript"],
+  "eslint.probe": ["javascript", "typescript"],
+  "vue.server.includeLanguages": ["vue"],
+  "typescript.tsserver.experimental.enableProjectDiagnostics": false,
+  "typescript.preferences.includePackageJsonAutoImports": "on"
+}

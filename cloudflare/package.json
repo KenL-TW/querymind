@@ -1,0 +1,26 @@
+{
+  "name": "querymind-cloudflare",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev --local --port 8787",
+    "dev:test": "wrangler dev --local --port 8787 --persist-to .wrangler-test",
+    "typecheck": "tsc --noEmit",
+    "types": "wrangler types ./src/worker-configuration.d.ts --strict-vars=false",
+    "check": "npm run types && npm run typecheck",
+    "data:convert": "node scripts/csv-to-d1.mjs",
+    "test:db:init": "node scripts/init-local-test.mjs",
+    "test": "npm run test:unit",
+    "test:unit": "playwright test tests/security.spec.ts",
+    "test:e2e": "playwright test tests/app.spec.ts tests/rbac.spec.ts",
+    "test:all": "playwright test",
+    "deploy:dry-run": "wrangler deploy --dry-run"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.30",
+    "playwright": "^1.62.1",
+    "typescript": "^5.9.2",
+    "wrangler": "^4.31.1"
+  }
+}

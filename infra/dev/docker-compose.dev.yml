@@ -1,0 +1,24 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: querymind-dev-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-qm_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-qm_pass}
+      POSTGRES_DB: ${QUERYMIND_APP_DB:-querymind}
+      QUERYMIND_APP_DB: ${QUERYMIND_APP_DB:-querymind}
+      QUERYMIND_META_DB: ${QUERYMIND_META_DB:-querymind_meta}
+    ports:
+      - "5432:5432"
+    volumes:
+      - querymind-dev-postgres:/var/lib/postgresql/data
+      - ../aws-demo/postgres/initdb:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+volumes:
+  querymind-dev-postgres:

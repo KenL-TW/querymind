@@ -1,0 +1,124 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  cloudflare-runtime:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: cloudflare/package-lock.json
+
+      - name: Install Cloudflare runtime dependencies
+        working-directory: cloudflare
+        run: npm ci
+
+      - name: Validate bindings and TypeScript
+        working-directory: cloudflare
+        run: npm run check
+
+      - name: Run Worker security unit tests
+        working-directory: cloudflare
+        run: npm run test:unit
+
+      - name: Install browser for product E2E
+        working-directory: cloudflare
+        run: npx playwright install chromium --with-deps
+
+      - name: Initialize disposable local D1
+        working-directory: cloudflare
+        run: npm run test:db:init
+
+      - name: Run product and RBAC E2E against disposable D1
+        working-directory: cloudflare
+        run: |
+          set -euo pipefail
+          ./node_modules/.bin/wrangler dev --local --port 8787 --persist-to .wrangler-test \
+            --var=ENVIRONMENT:local \
+            --var=AI_MOCK_MODE:true \
+            --var=AUTH_REQUIRED:true \
+            --var=AUTH_JWT_SECRET:ci-only-jwt-secret-querymind-2026 \
+            --var=AUTH_BOOTSTRAP_TOKEN:ci-only-bootstrap-token-querymind-2026 \
+            --var=AUTH_PASSWORD_PEPPER:ci-only-password-pepper-querymind-2026 \
+            > .ci-worker.log 2>&1 &
+          worker_pid=$!
+          trap 'kill "$worker_pid" 2>/dev/null || true' EXIT
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:8787/health >/dev/null; then break; fi
+            if [ "$attempt" = 30 ]; then cat .ci-worker.log; exit 1; fi
+            sleep 1
+          done
+          curl --fail --silent --show-error \
+            --request POST \
+            --header 'content-type: application/json' \
+            --data '{"email":"owner@example.com","password":"correct-horse-battery-staple","bootstrapToken":"ci-only-bootstrap-token-querymind-2026"}' \
+            http://127.0.0.1:8787/api/v1/auth/bootstrap >/dev/null
+          curl --fail --silent --show-error \
+            --request POST \
+            --header 'content-type: application/json' \
+            --data '{"email":"owner@example.com","password":"correct-horse-battery-staple"}' \
+            --cookie-jar .ci-cookie.txt \
+            http://127.0.0.1:8787/api/v1/auth/login >/dev/null
+          curl --fail --silent --show-error \
+            --request POST \
+            --cookie .ci-cookie.txt \
+            http://127.0.0.1:8787/api/v1/schema/refresh >/dev/null
+          QUERYMIND_TEST_URL=http://127.0.0.1:8787 npm run test:e2e
+
+      - name: Validate Worker deployment bundle
+        working-directory: cloudflare
+        run: npm run deploy:dry-run
+
+  repo-checks:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Validate AWS demo env preflight path
+        run: >
+          python scripts/qm.py aws-preflight
+          --env-file infra/aws-demo/.env.aws-demo.example
+          --allow-placeholders
+          --skip-compose
+          --skip-build-checks
+
+      - name: Validate Docker Compose configs
+        run: |
+          docker compose -f infra/dev/docker-compose.dev.yml config
+          cd infra/aws-demo
+          QUERYMIND_ENV_FILE=.env.aws-demo.example docker compose --env-file .env.aws-demo.example -f docker-compose.aws-demo.yml config
+
+      - name: Python syntax check
+        run: python -m compileall api config core tools adapters ui scripts
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Frontend typecheck
+        working-directory: frontend
+        run: npm run typecheck

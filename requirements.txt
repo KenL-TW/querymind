@@ -1,0 +1,48 @@
+# ── Core framework ─────────────────────────────────────────────────────────────
+langchain==0.3.25
+langchain-community==0.3.23
+langchain-core==0.3.61
+langchain-openai==0.3.18
+
+# ── LLM providers (optional — install only what you use) ──────────────────────
+# langchain-anthropic==0.3.15
+# langchain-aws==0.2.14
+
+# ── API layer ──────────────────────────────────────────────────────────────────
+fastapi==0.115.12
+uvicorn[standard]==0.34.2
+pydantic==2.11.4
+pydantic-settings==2.9.1
+slowapi==0.1.9
+python-multipart==0.0.20
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+
+# ── Database ───────────────────────────────────────────────────────────────────
+sqlalchemy==2.0.41
+psycopg2-binary==2.9.9
+
+# ── Search / similarity ────────────────────────────────────────────────────────
+rank-bm25==0.2.2
+python-Levenshtein==0.27.1
+
+# ── Scheduler ──────────────────────────────────────────────────────────────────
+APScheduler==3.11.0
+
+# ── Templates ─────────────────────────────────────────────────────────────────
+Jinja2==3.1.6
+
+# ── Logging ────────────────────────────────────────────────────────────────────
+structlog==25.3.0
+
+# ── Observability ─────────────────────────────────────────────────────────────
+prometheus-fastapi-instrumentator==7.0.2
+
+# ── Export ────────────────────────────────────────────────────────────────────
+openpyxl==3.1.5
+pandas==2.2.3
+requests==2.32.3
+streamlit==1.45.1
+
+# ── AWS (optional — required for S3/EventBridge backends) ─────────────────────
+# boto3==1.37.38

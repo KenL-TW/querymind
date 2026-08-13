@@ -1,0 +1,61 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "querymind",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-11",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": {
+    "enabled": true,
+    "logs": {
+      "enabled": true,
+      "head_sampling_rate": 1,
+      "invocation_logs": true
+    },
+    "traces": {
+      "enabled": true,
+      "head_sampling_rate": 0.05
+    }
+  },
+  "vars": {
+    "ENVIRONMENT": "preview",
+    "OPENAI_MODEL": "gpt-4o",
+    "ALLOWED_OPENAI_MODELS": "gpt-4o,gpt-4o-mini",
+    "AI_GATEWAY_URL": "",
+    "AI_GATEWAY_BYOK_ALIAS": "",
+    "AI_MOCK_MODE": "true",
+    "AI_USER_REQUESTS_PER_HOUR": "20",
+    "AI_GLOBAL_REQUESTS_PER_DAY": "200",
+    "AI_MAX_PROMPT_CHARACTERS": "8000",
+    "AUTH_REQUIRED": "true",
+    "AUTH_TOKEN_TTL_SECONDS": "28800",
+    "AUTH_LOGIN_ATTEMPTS_PER_15_MINUTES": "20"
+  },
+  "secrets": {
+    "required": [
+      "AUTH_JWT_SECRET",
+      "AUTH_BOOTSTRAP_TOKEN",
+      "AUTH_PASSWORD_PEPPER",
+      "AI_GATEWAY_TOKEN"
+    ]
+  },
+  "d1_databases": [
+    {
+      "binding": "QUERYMIND_DATA",
+      "database_name": "querymind-data",
+      "database_id": "7082aa34-6598-4f0a-9522-30f9fd41830b",
+      "migrations_dir": "migrations/data"
+    },
+    {
+      "binding": "QUERYMIND_APP",
+      "database_name": "querymind-app",
+      "database_id": "31aa9906-6ced-4a9c-9b46-1af029e3271f",
+      "migrations_dir": "migrations/app"
+    }
+  ],
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "run_worker_first": true,
+    "not_found_handling": "single-page-application"
+  }
+}

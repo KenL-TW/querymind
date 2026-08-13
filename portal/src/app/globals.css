@@ -1,0 +1,40 @@
+@import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;600;700&family=Space+Grotesk:wght@500;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  font-family: 'Noto Sans TC', sans-serif;
+  background:
+    radial-gradient(1000px 500px at 10% -20%, rgba(11,122,117,0.25), transparent 70%),
+    radial-gradient(1000px 500px at 90% 120%, rgba(226,114,91,0.25), transparent 70%),
+    #f5f1e8;
+  color: #1f2a35;
+}
+
+.card {
+  @apply rounded-2xl border border-black/10 bg-white/80 backdrop-blur-sm shadow-sm;
+}
+
+.btn {
+  @apply inline-flex items-center justify-center rounded-xl px-4 py-2 font-semibold transition;
+}
+
+.btn-primary {
+  @apply btn bg-accent text-white hover:opacity-90;
+}
+
+.btn-secondary {
+  @apply btn bg-ink text-white hover:opacity-90;
+}
+
+.input {
+  @apply w-full rounded-xl border border-black/20 bg-white px-3 py-2 outline-none focus:border-accent;
+}
