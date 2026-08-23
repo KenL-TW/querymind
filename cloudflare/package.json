@@ -12,7 +12,7 @@
     "data:convert": "node scripts/csv-to-d1.mjs",
     "test:db:init": "node scripts/init-local-test.mjs",
     "test": "npm run test:unit",
-    "test:unit": "playwright test tests/security.spec.ts",
+    "test:unit": "playwright test tests/security.spec.ts tests/explainability.spec.ts",
     "test:e2e": "playwright test tests/app.spec.ts tests/rbac.spec.ts",
     "test:all": "playwright test",
     "deploy:dry-run": "wrangler deploy --dry-run"

@@ -18,6 +18,8 @@ export interface AuthenticatedUser {
   apiKeyPrefix?: string;
   /** Internal credential version used when issuing browser JWTs. */
   passwordUpdatedAt?: string | null;
+  /** Optional deterministic data boundary. Blank values fall back to role:<role>. */
+  scopeKey?: string;
 }
 
 interface TokenPayload { sub: string; email: string; exp: number; iat: number; pwd?: string | null; }
@@ -32,6 +34,7 @@ interface UserCredentialRow {
   password_updated_at: string | null;
   role_name: string;
   is_active: number;
+  data_scope_key?: string | null;
 }
 
 interface RoleRow { role_name: string; capabilities_json: string; max_rows_per_query: number; }
@@ -158,7 +161,7 @@ async function roleFor(env: Env, roleName: string): Promise<Pick<AuthenticatedUs
 
 async function userFor(
   env: Env,
-  row: Pick<UserCredentialRow, "id" | "email" | "display_name" | "role_name" | "is_active"> & Partial<Pick<UserCredentialRow, "password_updated_at">>,
+  row: Pick<UserCredentialRow, "id" | "email" | "display_name" | "role_name" | "is_active"> & Partial<Pick<UserCredentialRow, "password_updated_at" | "data_scope_key">>,
   apiKeyPrefix?: string,
 ): Promise<AuthenticatedUser> {
   if (row.is_active !== 1) throw new HttpError(403, "ACCOUNT_DISABLED", "This account has been deactivated.");
@@ -170,6 +173,7 @@ async function userFor(
     principalType: apiKeyPrefix ? "api_key" : "session",
     ...(apiKeyPrefix ? { apiKeyPrefix } : {}),
     ...(row.password_updated_at !== undefined ? { passwordUpdatedAt: row.password_updated_at } : {}),
+    scopeKey: row.data_scope_key?.trim() || `role:${row.role_name}`,
   };
 }
 
@@ -210,8 +214,8 @@ async function apiKeyUser(token: string, env: Env): Promise<AuthenticatedUser | 
   if (!token.startsWith("qm_")) return null;
   const keyHash = await hashOpaqueSecret(token, env);
   const row = await env.QUERYMIND_APP.prepare(
-    "SELECT u.id, u.email, u.display_name, u.role_name, u.is_active, k.key_prefix FROM api_keys k JOIN users u ON u.id = k.user_id WHERE k.key_hash = ? AND k.revoked_at IS NULL",
-  ).bind(keyHash).first<Pick<UserCredentialRow, "id" | "email" | "display_name" | "role_name" | "is_active"> & { key_prefix: string }>();
+    "SELECT u.id, u.email, u.display_name, u.role_name, u.is_active, u.data_scope_key, k.key_prefix FROM api_keys k JOIN users u ON u.id = k.user_id WHERE k.key_hash = ? AND k.revoked_at IS NULL",
+  ).bind(keyHash).first<Pick<UserCredentialRow, "id" | "email" | "display_name" | "role_name" | "is_active" | "data_scope_key"> & { key_prefix: string }>();
   if (!row) return null;
   const now = new Date().toISOString();
   await env.QUERYMIND_APP.prepare("UPDATE api_keys SET last_used_at = ? WHERE key_hash = ?").bind(now, keyHash).run();
@@ -219,7 +223,8 @@ async function apiKeyUser(token: string, env: Env): Promise<AuthenticatedUser | 
 }
 
 export async function requireUser(request: Request, env: Env): Promise<AuthenticatedUser> {
-  if (env.AUTH_REQUIRED !== "true") return { id: "local-anonymous", email: "local@querymind.invalid", displayName: "Local user", roleName: "owner", capabilities: ["*"], maxRows: MAX_SAFE_RESULT_ROWS, principalType: "local" };
+  if (env.ENVIRONMENT === "production" && env.AUTH_REQUIRED !== "true") throw new HttpError(503, "AUTH_REQUIRED_CONFIG", "Production authentication must be enabled.");
+  if (env.AUTH_REQUIRED !== "true") return { id: "local-anonymous", email: "local@querymind.invalid", displayName: "Local user", roleName: "owner", capabilities: ["*"], maxRows: MAX_SAFE_RESULT_ROWS, principalType: "local", scopeKey: "role:owner" };
   if (!env.AUTH_JWT_SECRET) throw new HttpError(503, "AUTH_NOT_CONFIGURED", "Authentication is not configured.");
   const token = tokenFromRequest(request);
   if (!token) throw new HttpError(401, "AUTH_REQUIRED", "Authentication is required.");
@@ -227,7 +232,7 @@ export async function requireUser(request: Request, env: Env): Promise<Authentic
   if (viaKey) return viaKey;
   const payload = await verifyJwt(token, env.AUTH_JWT_SECRET);
   if (!payload) throw new HttpError(401, "INVALID_SESSION", "Session is invalid or expired.");
-  const user = await env.QUERYMIND_APP.prepare("SELECT id, email, display_name, role_name, is_active, password_updated_at FROM users WHERE id = ? AND email = ?").bind(payload.sub, payload.email).first<Pick<UserCredentialRow, "id" | "email" | "display_name" | "role_name" | "is_active" | "password_updated_at">>();
+  const user = await env.QUERYMIND_APP.prepare("SELECT id, email, display_name, role_name, is_active, password_updated_at, data_scope_key FROM users WHERE id = ? AND email = ?").bind(payload.sub, payload.email).first<Pick<UserCredentialRow, "id" | "email" | "display_name" | "role_name" | "is_active" | "password_updated_at" | "data_scope_key">>();
   if (!user) throw new HttpError(401, "INVALID_SESSION", "Session user no longer exists.");
   if (payload.pwd === undefined || payload.pwd !== user.password_updated_at) throw new HttpError(401, "INVALID_SESSION", "Session was invalidated by a password change.");
   return userFor(env, user);
@@ -247,7 +252,7 @@ export async function bootstrapUser(env: Env, email: string, password: string, b
   if ((count?.total ?? 0) > 0) throw new HttpError(409, "BOOTSTRAP_ALREADY_COMPLETE", "An initial user already exists.");
   const credential = await createPasswordRecord(password, env);
   const now = new Date().toISOString();
-  const row: Pick<UserCredentialRow, "id" | "email" | "display_name" | "role_name" | "is_active" | "password_updated_at"> = { id: crypto.randomUUID(), email, display_name: email.split("@")[0] ?? email, role_name: "owner", is_active: 1, password_updated_at: now };
+  const row: Pick<UserCredentialRow, "id" | "email" | "display_name" | "role_name" | "is_active" | "password_updated_at" | "data_scope_key"> = { id: crypto.randomUUID(), email, display_name: email.split("@")[0] ?? email, role_name: "owner", is_active: 1, password_updated_at: now, data_scope_key: null };
   const inserted = await env.QUERYMIND_APP.prepare(
     "INSERT INTO users (id, email, display_name, password_salt, password_hash, password_algorithm, password_updated_at, role_name, is_active, updated_at, created_at, last_seen_at) SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ? WHERE NOT EXISTS (SELECT 1 FROM users)",
   ).bind(row.id, row.email, row.display_name, credential.salt, credential.hash, credential.algorithm, now, row.role_name, row.is_active, now, now, now).run();
@@ -256,7 +261,7 @@ export async function bootstrapUser(env: Env, email: string, password: string, b
 }
 
 export async function loginUser(env: Env, email: string, password: string): Promise<AuthenticatedUser> {
-  const row = await env.QUERYMIND_APP.prepare("SELECT id, email, display_name, password_salt, password_hash, password_algorithm, password_updated_at, role_name, is_active FROM users WHERE email = ?").bind(email).first<UserCredentialRow>();
+  const row = await env.QUERYMIND_APP.prepare("SELECT id, email, display_name, password_salt, password_hash, password_algorithm, password_updated_at, role_name, is_active, data_scope_key FROM users WHERE email = ?").bind(email).first<UserCredentialRow>();
   const algorithm = row?.password_algorithm ?? "pbkdf2-sha256-100000";
   if (!row?.password_salt || !row.password_hash || !(await passwordMatches(password, row.password_salt, row.password_hash, algorithm, env))) throw new HttpError(401, "INVALID_CREDENTIALS", "Email or password is incorrect.");
   if (row.is_active !== 1) throw new HttpError(403, "ACCOUNT_DISABLED", "This account has been deactivated.");

@@ -1,4 +1,5 @@
 import { HttpError } from "./http";
+import type { EffectiveScope } from "./scope";
 
 interface DataTable {
   name: string;
@@ -89,7 +90,7 @@ export async function refreshSchemaCatalog(env: Env): Promise<{ tableCount: numb
   return { tableCount: tables.length, refreshedAt: now };
 }
 
-export async function schemaContext(env: Env): Promise<string> {
+export async function schemaContext(env: Env, scope?: EffectiveScope): Promise<string> {
   const tables = (await env.QUERYMIND_APP.prepare("SELECT table_name, description FROM schema_catalog_tables ORDER BY table_name").all<{ table_name: string; description: string }>()).results ?? [];
   if (tables.length === 0) throw new HttpError(409, "SCHEMA_CATALOG_EMPTY", "Schema catalog is empty. Refresh it before using the AI agent.");
   const columns = (await env.QUERYMIND_APP.prepare("SELECT table_name, column_name, data_type, is_primary_key FROM schema_catalog_columns ORDER BY table_name, ordinal_position").all<{ table_name: string; column_name: string; data_type: string; is_primary_key: number }>()).results ?? [];
@@ -97,14 +98,22 @@ export async function schemaContext(env: Env): Promise<string> {
   const grouped = new Map<string, string[]>();
   const relationships = new Map<string, string[]>();
   for (const column of columns) {
+    const policy = scope?.datasource.tables[column.table_name.toLowerCase()];
+    if (scope && (!policy || (policy.columns !== "*" && !policy.columns.includes(column.column_name.toLowerCase())))) continue;
     const item = `${column.column_name}${column.is_primary_key ? ' PK' : ''} ${column.data_type}`;
     grouped.set(column.table_name, [...(grouped.get(column.table_name) ?? []), item]);
   }
   for (const foreignKey of foreignKeys) {
+    if (scope && (!scope.datasource.tables[foreignKey.table_name.toLowerCase()] || !scope.datasource.tables[foreignKey.referenced_table.toLowerCase()])) continue;
+    if (scope) {
+      const sourcePolicy = scope.datasource.tables[foreignKey.table_name.toLowerCase()];
+      const targetPolicy = scope.datasource.tables[foreignKey.referenced_table.toLowerCase()];
+      if ((sourcePolicy?.columns !== "*" && !sourcePolicy?.columns.includes(foreignKey.column_name.toLowerCase())) || (targetPolicy?.columns !== "*" && !targetPolicy?.columns.includes(foreignKey.referenced_column.toLowerCase()))) continue;
+    }
     const item = `${foreignKey.column_name} -> ${foreignKey.referenced_table}.${foreignKey.referenced_column}`;
     relationships.set(foreignKey.table_name, [...(relationships.get(foreignKey.table_name) ?? []), item]);
   }
-  const lines = tables.map((table) => {
+  const lines = tables.filter((table) => !scope || Boolean(scope.datasource.tables[table.table_name.toLowerCase()])).map((table) => {
     const relationText = relationships.get(table.table_name)?.join(", ");
     return `${table.table_name}(${(grouped.get(table.table_name) ?? []).join(', ')})${relationText ? ` FK[${relationText}]` : ""}`;
   });

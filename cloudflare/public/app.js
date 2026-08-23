@@ -95,6 +95,20 @@ function empty(title, detail, action = "") { return `<section class="empty"><spa
 function table(headers, rows, className = "") { return `<div class="table-wrap"><table class="${className}"><thead><tr>${headers.map((head) => `<th>${esc(head)}</th>`).join("")}</tr></thead><tbody>${rows || `<tr><td colspan="${headers.length}" class="table-empty">目前沒有資料</td></tr>`}</tbody></table></div>`; }
 function button(label, options = {}) { return `<button class="button ${options.kind || "secondary"}" ${options.attrs || ""}>${options.icon ? icon(options.icon) : ""}${label}</button>`; }
 function status(text, tone = "neutral") { return `<span class="status ${tone}">${esc(text)}</span>`; }
+async function submitFeedback(runId, rating, category = null, comment = "") {
+  try {
+    await api(`/api/v1/query-runs/${encodeURIComponent(runId)}/feedback`, { method: "POST", body: JSON.stringify({ rating, category, comment }) });
+    const box = [...root.querySelectorAll("[data-feedback-box]")].find((item) => item.dataset.feedbackBox === runId);
+    if (box) { box.querySelectorAll("button").forEach((button) => { button.disabled = true; }); box.querySelector(".feedback-negative")?.setAttribute("hidden", ""); box.insertAdjacentHTML("beforeend", `<small class="feedback-thanks">感謝你的回饋。</small>`); }
+    toast("回饋已記錄");
+  } catch (error) { toast(error.message, "error"); }
+}
+root.addEventListener("click", (event) => {
+  const rating = event.target.closest?.("[data-feedback-rating]");
+  if (rating) { event.preventDefault(); if (rating.dataset.feedbackRating === "negative") rating.closest("[data-feedback-box]")?.querySelector(".feedback-negative")?.removeAttribute("hidden"); else void submitFeedback(rating.dataset.feedbackRun, "positive"); return; }
+  const submit = event.target.closest?.("[data-feedback-submit]");
+  if (submit) { event.preventDefault(); const box = submit.closest("[data-feedback-box]"); const category = box?.querySelector("[data-feedback-category]")?.value || ""; const comment = box?.querySelector("[data-feedback-comment]")?.value || ""; if (!category) { toast("請選擇改善類別", "error"); return; } void submitFeedback(submit.dataset.feedbackRun, "negative", category, comment); }
+});
 
 async function renderDashboard() {
   const data = await load("dashboard", "/api/v1/dashboard"); const summary = data.summary; const recent = data.recent.map((item) => `<li><span class="activity-dot"></span><div><b>${esc(item.event_type)}</b><small>${esc(item.resource_type || "系統事件")}</small></div><time>${shortDate(item.created_at)}</time></li>`).join("");
@@ -110,7 +124,7 @@ function chartFor(rows) {
   const label = columns.find((column) => column !== numeric) || "項目"; const items = rows.slice(0, 12).map((row) => ({ label: String(row[label] ?? "—"), value: Number(row[numeric]) || 0 })); const max = Math.max(...items.map((item) => Math.abs(item.value)), 1);
   return `<div class="chart" aria-label="${esc(numeric)} 圖表">${items.map((item) => `<div class="chart-row"><span title="${esc(item.label)}">${esc(item.label)}</span><div class="chart-track"><progress max="100" value="${Math.max(2, Math.round(Math.abs(item.value) / max * 100))}" aria-label="${esc(item.label)}：${esc(item.value)}"></progress></div><b>${esc(new Intl.NumberFormat("zh-TW", { maximumFractionDigits: 2 }).format(item.value))}</b></div>`).join("")}</div>`;
 }
-function resultPanel(result, key) {
+function legacyResultPanel(result, key) {
   const rows = result.rows || []; const columns = [...new Set(rows.flatMap((row) => Object.keys(row)))]; const current = state.resultTabs.get(key) || "table";
   const tab = (id, label, disabled = false) => `<button class="result-tab ${current === id ? "active" : ""}" data-result-tab="${key}:${id}" ${disabled ? "disabled" : ""}>${label}</button>`;
   const rowsHtml = rows.slice(0, 100).map((row) => `<tr>${columns.map((column) => `<td>${esc(row[column])}</td>`).join("")}</tr>`).join("");
@@ -119,6 +133,28 @@ function resultPanel(result, key) {
 }
 
 function sessionRow(session) { return `<div class="session-item ${session.id === state.activeSession ? "selected" : ""}"><button class="session-main" data-session="${session.id}"><span><b>${esc(session.title || "未命名對話")}</b><small>${session.pinned ? "已釘選 · " : ""}${shortDate(session.updatedAt)}</small></span></button><div class="session-actions"><button title="${session.pinned ? "取消釘選" : "釘選"}" aria-label="${session.pinned ? "取消釘選" : "釘選"}" data-session-action="pin" data-session-id="${session.id}" data-session-value="${session.pinned}">${icon("pin")}</button><button title="重新命名" aria-label="重新命名" data-session-action="rename" data-session-id="${session.id}">${icon("edit")}</button><button title="${state.archiveMode ? "還原對話" : "封存對話"}" aria-label="${state.archiveMode ? "還原對話" : "封存對話"}" data-session-action="archive" data-session-id="${session.id}" data-session-value="${state.archiveMode}">${icon("archive")}</button>${state.archiveMode ? `<button title="永久刪除" aria-label="永久刪除" data-session-action="delete" data-session-id="${session.id}">${icon("trash")}</button>` : ""}</div></div>`; }
+function explainabilityPanel(result, key) {
+  const explain = result.explainability;
+  if (!explain) return "";
+  const understanding = explain.understanding || {};
+  const sources = explain.sources || {};
+  const governance = sources.governance || {};
+  const summary = explain.summary || {};
+  const list = (values, empty = "—") => Array.isArray(values) && values.length ? values.map((value) => `<li>${esc(value)}</li>`).join("") : `<li class="muted">${empty}</li>`;
+  const feedback = explain.feedback?.supported && explain.feedback.queryRunId ? `<div class="query-feedback" data-feedback-box="${esc(explain.feedback.queryRunId)}"><div><b>這次回答有幫助嗎？</b><small>回饋只會綁定本次查詢，且不會改變資料權限。</small></div><div class="feedback-actions"><button class="button compact" data-feedback-rating="positive" data-feedback-run="${esc(explain.feedback.queryRunId)}">有幫助</button><button class="button compact" data-feedback-rating="negative" data-feedback-run="${esc(explain.feedback.queryRunId)}">需要改善</button></div><div class="feedback-negative" hidden><label>改善類別<select data-feedback-category><option value="">請選擇</option><option value="interpretation">問題理解</option><option value="source">資料來源</option><option value="calculation">計算方式</option><option value="incomplete">結果不完整</option><option value="scope">資料範圍</option><option value="other">其他</option></select></label><textarea data-feedback-comment maxlength="800" placeholder="補充說明（選填，最多 800 字）"></textarea><button class="button primary compact" data-feedback-submit data-feedback-run="${esc(explain.feedback.queryRunId)}">送出回饋</button></div></div>` : "";
+  return `<section class="query-explainability"><header class="explain-head"><div><span class="result-kicker">可解釋查詢</span><b>${esc(summary.headline || "查詢完成")}</b></div><span class="governance-badge">${icon("shield")}已套用治理</span></header><div class="explain-grid"><article><span class="explain-label">Query Understanding</span><h4>${esc(understanding.intent || "資料查詢")}</h4><dl class="explain-facts"><div><dt>指標</dt><dd><ul>${list(understanding.metrics)}</ul></dd></div><div><dt>維度</dt><dd><ul>${list(understanding.dimensions)}</ul></dd></div><div><dt>條件</dt><dd><ul>${list(understanding.filters)}</ul></dd></div><div><dt>時間</dt><dd>${esc(understanding.timeRange || "未指定")}</dd></div></dl></article><article><span class="explain-label">Data Sources / Governance</span><ul class="source-list">${(sources.tables || []).map((source) => `<li><b>${esc(source.label || source.name)}</b><small>${esc(source.name)}</small></li>`).join("") || "<li class=muted>已授權資料來源</li>"}</ul><div class="governance-chips"><span>${governance.scopeApplied ? "範圍已套用" : "範圍未指定"}</span><span>${governance.rowPolicyApplied ? "資料列規則已套用" : "資料列規則已檢查"}</span><span>${governance.columnPolicyApplied ? "欄位權限已檢查" : "欄位權限未指定"}</span><span>${governance.dlpApplied ? "敏感欄位已遮罩" : "DLP 未套用"}</span></div></article><article><span class="explain-label">How calculated</span><p>${esc(explain.explanation?.business || "此查詢已完成唯讀驗證與結果遮罩。")}</p><ul class="summary-list">${list(summary.highlights)}</ul>${summary.caveats?.length ? `<div class="explain-caveats"><ul>${list(summary.caveats)}</ul></div>` : ""}</article></div>${explain.explanation?.rawSqlAvailable && explain.explanation?.sql ? `<details class="sql-disclosure"><summary>檢視已驗證 SQL</summary><pre>${esc(explain.explanation.sql)}</pre></details>` : ""}${feedback}</section>`;
+}
+
+function resultPanel(result, key) {
+  const rows = result.rows || []; const columns = [...new Set(rows.flatMap((row) => Object.keys(row)))]; const current = state.resultTabs.get(key) || "table";
+  const rawSqlAvailable = result.explainability ? Boolean(result.explainability.explanation?.rawSqlAvailable) : has("view_schema");
+  const sql = rawSqlAvailable ? (result.explainability?.explanation?.sql || result.sql) : undefined;
+  const tab = (id, label, disabled = false) => `<button class="result-tab ${current === id ? "active" : ""}" data-result-tab="${key}:${id}" ${disabled ? "disabled" : ""}>${label}</button>`;
+  const rowsHtml = rows.slice(0, 100).map((row) => `<tr>${columns.map((column) => `<td>${esc(row[column])}</td>`).join("")}</tr>`).join("");
+  const canChart = Boolean(rows.length && columns.some((column) => rows.some((row) => Number.isFinite(Number(row[column])))));
+  return `${explainabilityPanel(result, key)}<section class="query-result"><header><div><span class="result-kicker">查詢結果</span><b>${Number(result.rowCount ?? rows.length).toLocaleString()} 筆資料${result.truncated ? "（僅顯示前 100 筆）" : ""}</b></div><div class="result-actions">${result.maskedColumns?.length ? status(`已遮罩 ${result.maskedColumns.length} 欄`, "safe") : ""}${has("export") && sql ? `<button class="icon-button" title="匯出 CSV" aria-label="匯出 CSV" data-export="${encodeURIComponent(sql)}">${icon("export")}</button>` : ""}</div></header><nav class="result-tabs" aria-label="查詢結果檢視">${tab("table", "表格")}${tab("chart", "圖表", !canChart)}${sql ? tab("sql", "SQL") : ""}</nav><div class="result-content">${current === "chart" ? chartFor(rows) : current === "sql" && sql ? `<div class="sql-panel"><button class="copy-sql" data-copy-sql="${encodeURIComponent(sql)}">${icon("copy")}複製 SQL</button><pre>${esc(sql)}</pre></div>` : table(columns, rowsHtml, "query-table")}</div></section>`;
+}
+
 async function renderChat() {
   await loadSessions();
   if (state.activeSession && !state.messages.length) await loadMessages(state.activeSession);

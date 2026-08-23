@@ -14,7 +14,7 @@ npm run dev
 
 Open `http://localhost:8787/health`. Wrangler creates local D1 state under `.wrangler/`; it is ignored by Git.
 
-`test:db:init` creates a separate disposable `.wrangler-test/` database for release E2E and applies application migrations `0001`–`0004` only. Migration `0005` is intentionally excluded from this release scope and this command never accesses remote D1. To exercise that disposable database, start `npm run dev:test`, bootstrap the first Owner with the token in your local `.dev.vars`, then run `npm run test:e2e`.
+`test:db:init` creates a separate disposable `.wrangler-test/` database for release E2E and applies application migrations `0001`–`0007`. This includes the DLP hardening (`0005`), governed query-policy state (`0006`) and explainability/feedback schema (`0007`); the command never accesses remote D1. To exercise that disposable database, start `npm run dev:test`, bootstrap the first Owner with the token in your local `.dev.vars`, then run `npm run test:e2e`.
 
 The CI workflow performs the same bootstrap and then refreshes the local schema catalog before E2E. Product history is bounded to a 25-row/32 KB masked preview; unpinned conversations older than 90 days and audit/query/usage metadata older than 180 days are pruned opportunistically when a new session is created, so no paid scheduler is required.
 

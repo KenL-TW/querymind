@@ -82,3 +82,15 @@
 - PostgreSQL runtime、SQLAlchemy、FastAPI、LangChain runtime。
 - 多資料庫 connection 管理與資料表/欄位級存取控制。
 - 大型 XLSX 伺服器端匯入與匯出。
+
+## 2026-08-21: P0 governed query safety core
+
+| ID | Status | Delivered | Verification / blocker |
+|---|---|---|---|
+| P0-GQSC | Preview deployed — production AI gate pending | SDD; forward-only app migration `0006_governed_query_safety.sql`; EffectiveScope and deny-by-default table/column/row policies; centralized QueryPolicyEngine for chat/direct/saved insight/export/schema; model egress credential redaction; production fail-closed runtime gate; DLP migration included in local test bootstrap; regression tests. | Local quality gates passed; remote app `0005–0007` applied; policy state `0006` healthy with 72 active policies; Worker version `2ff7a151-b9a7-4656-9c76-6621b8903c56` deployed and preview smoke passed. Production remains gated until AI Gateway BYOK URL/alias/token is configured and `AI_MOCK_MODE=false`. See `docs/releases/p0-governed-query-safety-core-release.md`. |
+## 2026-08-21: P1 explainable query experience
+
+| ID | Status | Delivered | Verification / blocker |
+|---|---|---|---|
+| P1-EQE | Preview deployed — production AI gate pending | Added P1 SDD/release report; additive app migration `0007_explainable_query_experience.sql`; deterministic QueryExplainability for chat/direct query; capability-gated SQL disclosure; authenticated owner-only idempotent feedback with audit; compact SPA cards and mobile-safe feedback UI; P1 tests. | TypeScript/check PASS; P0 security 62/62; P1 tests 4/4; local D1 0001–0007 and desktop/mobile UI smoke PASS without console errors. Remote `0007` applied and the current bundle is deployed in preview mode; production AI activation remains gated on AI Gateway BYOK. |
+Additional P1 verification: existing product/RBAC E2E passed 12/12 with local Chromium channel; original menu, module, RBAC and mobile shell flows remain green.

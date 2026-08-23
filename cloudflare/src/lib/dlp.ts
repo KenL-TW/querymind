@@ -29,6 +29,15 @@ export interface SensitiveProjectionAnalysis {
 
 const DEFAULT_SENSITIVE_NAMES = ["email", "phone", "address", "birth_date", "salary"] as const;
 
+/** Redacts credentials and secret-like user content before model egress or persistence. */
+export function redactModelText(value: string): string {
+  return value
+    .replace(/\bsk-[A-Za-z0-9_-]{12,}\b/gu, "[REDACTED]")
+    .replace(/\bAKIA[0-9A-Z]{16}\b/gu, "[REDACTED]")
+    .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]{12,}/giu, "Bearer [REDACTED]")
+    .replace(/\b((?:api[_-]?key|token|password|secret)\s*[:=])\s*[^\s,;]+/giu, "$1 [REDACTED]");
+}
+
 function maskValue(value: unknown, mode: MaskMode): unknown {
   if (value === null || mode === "none") return value;
   if (mode === "full") return "[REDACTED]";

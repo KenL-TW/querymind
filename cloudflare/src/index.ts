@@ -2,12 +2,15 @@
 
 import { aiAvailability, type AiAvailability } from "./lib/ai-config";
 import { errorResponse, json } from "./lib/http";
+import { assertStaticRuntimeConfiguration } from "./lib/runtime-config";
+import { policyState } from "./lib/scope";
 import { chat } from "./routes/agent";
 import { authStatus, bootstrap, bootstrapStatus, changePassword, currentUser, login, logout } from "./routes/auth";
 import { executeQuery } from "./routes/query";
 import { getSchema, refreshSchema } from "./routes/schema";
 import { addMessage, createSession, deleteSession, listMessages, listSessions, sessionPath, updateSession } from "./routes/sessions";
 import { currentUsage, publicConfiguration } from "./routes/system";
+import { submitQueryFeedback } from "./routes/feedback";
 import { acceptInvitation, invitationPreview } from "./routes/invitations";
 import { adminOverview, auditLog, connectionInfo, createApiKey, createInsight, createInvitation, createTemplate, dashboard, deleteDictionary, deleteInsight, deleteTemplate, exportCsv, listApiKeys, listDictionary, listInsights, listInvitations, listRoles, listTemplates, listUsers, resetUserPassword, revokeApiKey, revokeInvitation, saveDictionary, systemInfo, updateInsight, updateRole, updateTemplate, updateUser } from "./routes/modules";
 
@@ -19,12 +22,13 @@ interface HealthPayload {
   environment: string;
   ai: AiAvailability;
   databases: { data: HealthDatabase; app: HealthDatabase };
+  policy: { ok: boolean; policyVersion: string | null; expectedMigration: string | null; policyCount: number };
 }
 
 async function checkAppDatabase(database: D1Database): Promise<HealthDatabase> {
   try {
-    const row = await database.prepare("SELECT COUNT(*) AS total FROM sqlite_schema WHERE type = 'table' AND name IN ('users', 'role_definitions', 'schema_catalog_tables', 'rate_limit_counters', 'audit_events')").first<{ total: number }>();
-    return row?.total === 5 ? "ok" : "unavailable";
+    const row = await database.prepare("SELECT COUNT(*) AS total FROM sqlite_schema WHERE type = 'table' AND name IN ('users', 'role_definitions', 'schema_catalog_tables', 'rate_limit_counters', 'audit_events', 'data_scope_policies', 'policy_state', 'query_feedback')").first<{ total: number }>();
+    return row?.total === 8 ? "ok" : "unavailable";
   } catch {
     return "unavailable";
   }
@@ -45,19 +49,24 @@ async function health(env: Env): Promise<Response> {
     checkAppDatabase(env.QUERYMIND_APP),
   ]);
   const ai = aiAvailability(env);
-  const ready = data === "ok" && app === "ok" && ai !== "pending";
+  const policy = await policyState(env);
+  let configOk = true;
+  try { assertStaticRuntimeConfiguration(env); } catch { configOk = false; }
+  const ready = data === "ok" && app === "ok" && policy.ok && ai !== "pending" && configOk;
   const payload: HealthPayload = {
     service: "querymind",
     status: ready ? "ok" : "degraded",
     environment: env.ENVIRONMENT,
     ai,
     databases: { data, app },
+    policy,
   };
   return json(payload, payload.status === "ok" ? 200 : 503);
 }
 
 async function route(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
+  if (url.pathname !== "/health") assertStaticRuntimeConfiguration(env);
   if (request.method === "GET" && url.pathname === "/health") return health(env);
   if (request.method === "POST" && url.pathname === "/api/v1/query") return executeQuery(request, env);
   if (request.method === "POST" && url.pathname === "/api/v1/auth/bootstrap") return bootstrap(request, env);
@@ -98,6 +107,8 @@ async function route(request: Request, env: Env): Promise<Response> {
   if (session?.isMessages && request.method === "POST") return addMessage(request, env, session.sessionId);
   if (session && request.method === "PATCH") return updateSession(request, env, session.sessionId);
   if (session && request.method === "DELETE") return deleteSession(request, env, session.sessionId);
+  const feedback = url.pathname.match(/^\/api\/v1\/query-runs\/([0-9a-f-]{36})\/feedback$/iu);
+  if (feedback && request.method === "POST") return submitQueryFeedback(request, env, feedback[1]);
   const template = url.pathname.match(/^\/api\/v1\/templates\/([0-9a-f-]{36}|template-[a-z-]+)$/iu);
   if (template && request.method === "PATCH") return updateTemplate(request, env, template[1]);
   if (template && request.method === "DELETE") return deleteTemplate(request, env, template[1]);

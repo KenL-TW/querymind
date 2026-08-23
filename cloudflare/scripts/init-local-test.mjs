@@ -18,6 +18,9 @@ const inputs = [
   ["querymind-app", "migrations/app/0002_add_local_auth.sql"],
   ["querymind-app", "migrations/app/0003_usage_and_security.sql"],
   ["querymind-app", "migrations/app/0004_restore_product_modules.sql"],
+  ["querymind-app", "migrations/app/0005_product_hardening.sql"],
+  ["querymind-app", "migrations/app/0006_governed_query_safety.sql"],
+  ["querymind-app", "migrations/app/0007_explainable_query_experience.sql"],
 ];
 
 for (const [database, file] of inputs) {
@@ -31,4 +34,4 @@ for (const [database, file] of inputs) {
 }
 
 console.log(`Disposable local D1 initialized at ${persistPath}`);
-console.log("Applied app migrations 0001-0004 only; 0005 is intentionally excluded from this release scope.");
+console.log("Applied app migrations 0001-0007, including DLP, governed query safety, and explainability feedback.");

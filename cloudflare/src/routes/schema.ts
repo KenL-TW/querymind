@@ -1,6 +1,7 @@
 import { requireBrowserSession, requireCapability, requireUser } from "../lib/auth";
 import { json } from "../lib/http";
 import { refreshSchemaCatalog, schemaContext } from "../lib/schema-catalog";
+import { resolveEffectiveScope } from "../lib/scope";
 
 export async function refreshSchema(request: Request, env: Env): Promise<Response> {
   const user = await requireUser(request, env);
@@ -12,5 +13,5 @@ export async function refreshSchema(request: Request, env: Env): Promise<Respons
 export async function getSchema(request: Request, env: Env): Promise<Response> {
   const user = await requireUser(request, env);
   requireCapability(user, "view_schema");
-  return json({ context: await schemaContext(env) });
+  return json({ context: await schemaContext(env, await resolveEffectiveScope(env, user)) });
 }
