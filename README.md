@@ -37,6 +37,7 @@ Deterministic Query Policy
 Read-only Data Execution
         ↓
 Explainable Result
+```text
 
 ## Architecture 
 
