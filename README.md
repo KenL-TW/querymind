@@ -37,3 +37,38 @@ Deterministic Query Policy
 Read-only Data Execution
         ↓
 Explainable Result
+
+## Architecture 
+
+The current primary runtime is based on Cloudflare.
+flowchart TD
+
+    U[Business User]
+
+    U --> SPA[Web Application]
+
+    SPA --> W[Cloudflare Worker]
+
+    W --> AUTH[Authentication + Feature RBAC]
+
+    AUTH --> SCOPE[EffectiveScope]
+
+    SCOPE --> CAT[Authorized Catalog / Context]
+
+    CAT --> AI[Cloudflare AI Gateway / OpenAI]
+
+    AI --> SQL[Generated SQL]
+
+    SQL --> POLICY[QueryPolicyEngine]
+
+    POLICY --> DLP[DLP + Result Guardrails]
+
+    DLP --> DATA[(Cloudflare D1 Business Data)]
+
+    DATA --> RESULT[Governed Result]
+
+    RESULT --> EXPLAIN[Explainability]
+
+    EXPLAIN --> SPA
+
+    W --> APP[(Cloudflare D1 Application Metadata)]
