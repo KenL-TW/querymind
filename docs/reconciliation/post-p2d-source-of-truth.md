@@ -1,7 +1,7 @@
 # QueryMind Post-P2-D Source-of-Truth Reconciliation
 
-**Audit date:** 2026-08-27  
-**Scope:** P0 through P2-D production baseline, before R14 hardening changes  
+**Audit date:** 2026-08-27
+**Scope:** P0 through P2-D production baseline, before R14 hardening changes
 **Evidence:** local checkout, `origin/main` (`c1b42fe085fe1f6d9c41e7e12a52c23f770f3cda`), release reports, migration files, and the recorded production baseline.
 
 ## Result
