@@ -27,6 +27,9 @@ const ICON_PATHS = {
   check: '<path d="m5 12 4 4L19 6"/>',
   warning: '<path d="M12 3 2.8 20h18.4zM12 9v4M12 17h.01"/>',
   logout: '<path d="M10 17l5-5-5-5M15 12H3M21 19V5a2 2 0 0 0-2-2h-5"/>',
+  layers: '<path d="m12 3 9 5-9 5-9-5 9-5Z"/><path d="m3 12 9 5 9-5M3 16l9 5 9-5"/>',
+  history: '<path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 3v5h5M12 7v5l3 2"/>',
+  branch: '<path d="M6 3v12M6 7h12M6 15h12"/><circle cx="6" cy="3" r="2"/><circle cx="18" cy="7" r="2"/><circle cx="18" cy="15" r="2"/>',
 };
 
 const CAPABILITY_LABELS = {
@@ -36,6 +39,11 @@ const CAPABILITY_LABELS = {
   refresh_schema: "重新掃描 D1 Schema", manage_users: "管理工作區與成員",
 };
 const ROLE_NAMES = ["viewer", "analyst", "editor", "dba", "owner"];
+Object.assign(CAPABILITY_LABELS, {
+  view_semantics: "檢視語意治理",
+  manage_semantic_drafts: "管理語意草稿",
+  review_semantics: "審查語意定義",
+});
 const PRODUCT_CAPABILITIES = Object.keys(CAPABILITY_LABELS);
 const PAGE_TITLES = {
   dashboard: ["工作總覽", "個人資料分析工作台"], chat: ["AI 對話", "以自然語言探索單一受控 D1"],
@@ -52,15 +60,58 @@ const state = {
   sidebarOpen: false, pendingPrompt: "", sending: false, archiveMode: false, resultTabs: new Map(), renderId: 0,
   userFilter: "", roleFilter: "all", inviteToken: "",
 };
+Object.assign(PAGE_TITLES, {
+  semantics: ["Semantic Registry", "以草稿與審查流程維護企業語意定義"],
+});
+Object.assign(state, {
+  semanticFilters: { search: "", type: "", assetStatus: "", revisionStatus: "", domain: "", page: 1, limit: 25 },
+  semanticAssetId: null,
+  semanticDetailTab: "overview",
+  semanticMutationPending: false,
+  semanticWorkspace: "assets",
+  semanticSuggestionFilters: { status: "OPEN", type: "", stale: "", page: 1, limit: 30 },
+});
 
 function icon(name, cls = "") { return `<svg class="icon ${cls}" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${ICON_PATHS[name] || ""}</svg>`; }
 function esc(value) { return String(value ?? "").replace(/[&<>'"]/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" })[ch]); }
+function inlineMarkdown(value) {
+  let html = esc(value);
+  html = html.replace(/`([^`\n]+)`/gu, "<code>$1</code>");
+  html = html.replace(/\*\*([^*\n]+)\*\*/gu, "<strong>$1</strong>");
+  html = html.replace(/__([^_\n]+)__/gu, "<strong>$1</strong>");
+  html = html.replace(/(^|[^*])\*([^*\n]+)\*(?!\*)/gu, "$1<em>$2</em>");
+  return html;
+}
+function renderMarkdown(value) {
+  const lines = String(value ?? "").split(/\r?\n/u);
+  const output = [];
+  let listType = null;
+  const closeList = () => { if (listType) { output.push(`</${listType}>`); listType = null; } };
+  for (const line of lines) {
+    const unordered = /^\s*[-*]\s+(.+)$/u.exec(line);
+    const ordered = /^\s*\d+[.)]\s+(.+)$/u.exec(line);
+    const item = unordered || ordered;
+    if (item) {
+      const nextType = unordered ? "ul" : "ol";
+      if (listType !== nextType) { closeList(); output.push(`<${nextType}>`); listType = nextType; }
+      output.push(`<li>${inlineMarkdown(item[1])}</li>`);
+    } else if (line.trim()) {
+      closeList();
+      output.push(`<p>${inlineMarkdown(line)}</p>`);
+    } else {
+      closeList();
+    }
+  }
+  closeList();
+  return output.join("");
+}
 function has(capability) { return Boolean(state.user?.capabilities?.includes("*") || state.user?.capabilities?.includes(capability)); }
 function fmtDate(value, empty = "—") { return value ? new Intl.DateTimeFormat("zh-TW", { dateStyle: "medium", timeStyle: "short" }).format(new Date(value)) : empty; }
 function shortDate(value) { return value ? new Intl.DateTimeFormat("zh-TW", { month: "short", day: "numeric" }).format(new Date(value)) : "—"; }
 function toast(message, tone = "ok") { const item = document.createElement("div"); item.className = `toast ${tone}`; item.innerHTML = `${icon(tone === "error" ? "warning" : "check")}${esc(message)}`; toastRegion.append(item); setTimeout(() => item.remove(), 4600); }
 function pageFromLocation() { const hash = location.hash.replace(/^#\/?/u, ""); return PAGE_TITLES[hash] ? hash : "dashboard"; }
 const PAGE_CAPABILITIES = { chat: "chat", schema: "view_schema", dictionary: "view_dictionary", templates: "view_templates", insights: "manage_own_insights", usage: "view_own_usage", source: "refresh_schema", "admin-overview": "manage_users", "admin-users": "manage_users", "admin-roles": "manage_users", "admin-invitations": "manage_users", "admin-audit": "manage_users", "admin-system": "manage_users" };
+Object.assign(PAGE_CAPABILITIES, { semantics: "view_semantics" });
 function pageAllowed(page) { const capability = PAGE_CAPABILITIES[page]; return Boolean(PAGE_TITLES[page]) && (!capability || has(capability)); }
 function go(page, options = {}) { if (!pageAllowed(page)) { toast("你的角色無法使用此功能", "error"); return; } if (options.pendingPrompt !== undefined) state.pendingPrompt = options.pendingPrompt; if (options.resetSession) { state.activeSession = null; state.messages = []; state.result = null; } const hash = `#/${page}`; if (location.hash === hash) { state.page = page; void render(); } else location.hash = hash; }
 function invalidate(...keys) { keys.forEach((key) => state.cache.delete(key)); }
@@ -92,6 +143,24 @@ function shell(content, page = state.page) {
     <main class="main"><header class="topbar"><div class="topbar-left"><button class="mobile-menu" data-action="open-sidebar" aria-label="開啟選單">${icon("more")}</button><div><h1>${title}</h1><p>${subtitle}</p></div></div><div class="topbar-right"><span class="readonly-chip">${icon("shield")}唯讀 D1</span><button class="profile-trigger" data-page="profile" aria-label="開啟個人設定"><span class="avatar">${initial}</span></button></div></header><div class="page">${content}</div></main></div>`;
 }
 function empty(title, detail, action = "") { return `<section class="empty"><span class="empty-icon">${icon("insight")}</span><h2>${esc(title)}</h2><p>${esc(detail)}</p>${action}</section>`; }
+const RESULT_COLUMN_LABELS = {
+  product: "商品",
+  product_name: "商品名稱",
+  sales_amount: "銷售額",
+  sales_revenue: "銷售額",
+  revenue: "營收",
+  order_count: "訂單數量",
+  count: "數量",
+  shipping_city: "出貨城市",
+  city: "城市",
+  customer_name: "客戶名稱",
+  status: "狀態",
+};
+function resultColumnLabel(column) {
+  const key = String(column ?? "").replace(/^.*\./u, "").toLowerCase();
+  if (RESULT_COLUMN_LABELS[key]) return RESULT_COLUMN_LABELS[key];
+  return key.replace(/[_-]+/gu, " ").replace(/\b\w/gu, (match) => match.toUpperCase()) || "欄位";
+}
 function table(headers, rows, className = "") { return `<div class="table-wrap"><table class="${className}"><thead><tr>${headers.map((head) => `<th>${esc(head)}</th>`).join("")}</tr></thead><tbody>${rows || `<tr><td colspan="${headers.length}" class="table-empty">目前沒有資料</td></tr>`}</tbody></table></div>`; }
 function button(label, options = {}) { return `<button class="button ${options.kind || "secondary"}" ${options.attrs || ""}>${options.icon ? icon(options.icon) : ""}${label}</button>`; }
 function status(text, tone = "neutral") { return `<span class="status ${tone}">${esc(text)}</span>`; }
@@ -129,7 +198,8 @@ function legacyResultPanel(result, key) {
   const tab = (id, label, disabled = false) => `<button class="result-tab ${current === id ? "active" : ""}" data-result-tab="${key}:${id}" ${disabled ? "disabled" : ""}>${label}</button>`;
   const rowsHtml = rows.slice(0, 100).map((row) => `<tr>${columns.map((column) => `<td>${esc(row[column])}</td>`).join("")}</tr>`).join("");
   const canChart = Boolean(rows.length && columns.some((column) => rows.some((row) => Number.isFinite(Number(row[column])))));
-  return `<section class="query-result"><header><div><span class="result-kicker">查詢結果</span><b>${Number(result.rowCount ?? rows.length).toLocaleString()} 筆資料${result.truncated ? "（僅顯示前 100 筆）" : ""}</b></div><div class="result-actions">${result.maskedColumns?.length ? status(`已遮罩 ${result.maskedColumns.length} 欄`, "safe") : ""}${has("export") && result.sql ? `<button class="icon-button" title="匯出 CSV" aria-label="匯出 CSV" data-export="${encodeURIComponent(result.sql)}">${icon("export")}</button>` : ""}</div></header><nav class="result-tabs" aria-label="查詢結果檢視">${tab("table", "表格")}${tab("chart", "圖表", !canChart)}${result.sql ? tab("sql", "SQL") : ""}</nav><div class="result-content">${current === "chart" ? chartFor(rows) : current === "sql" ? `<div class="sql-panel"><button class="copy-sql" data-copy-sql="${encodeURIComponent(result.sql || "")}">${icon("copy")}複製 SQL</button><pre>${esc(result.sql || "")}</pre></div>` : table(columns, rowsHtml, "query-table")}</div></section>`;
+  const sql = typeof result.sql === "string" && result.sql.trim() ? result.sql.trim() : undefined;
+  return `<section class="query-result"><header><div><span class="result-kicker">查詢結果</span><b>${Number(result.rowCount ?? rows.length).toLocaleString()} 筆資料${result.truncated ? "（僅顯示前 100 筆）" : ""}</b></div><div class="result-actions">${result.maskedColumns?.length ? status(`已遮罩 ${result.maskedColumns.length} 欄`, "safe") : ""}${has("export") && sql ? `<button class="icon-button" title="匯出 CSV" aria-label="匯出 CSV" data-export="${encodeURIComponent(sql)}">${icon("export")}</button>` : ""}</div></header><nav class="result-tabs" aria-label="查詢結果檢視">${tab("table", "表格")}${tab("chart", "圖表", !canChart)}${sql ? tab("sql", "SQL") : ""}</nav><div class="result-content">${current === "chart" ? chartFor(rows) : current === "sql" && sql ? `<div class="sql-panel"><button class="copy-sql" data-copy-sql="${encodeURIComponent(sql)}">${icon("copy")}複製 SQL</button><pre>${esc(sql)}</pre></div>` : table(columns.map(resultColumnLabel), rowsHtml, "query-table")}</div></section>`;
 }
 
 function sessionRow(session) { return `<div class="session-item ${session.id === state.activeSession ? "selected" : ""}"><button class="session-main" data-session="${session.id}"><span><b>${esc(session.title || "未命名對話")}</b><small>${session.pinned ? "已釘選 · " : ""}${shortDate(session.updatedAt)}</small></span></button><div class="session-actions"><button title="${session.pinned ? "取消釘選" : "釘選"}" aria-label="${session.pinned ? "取消釘選" : "釘選"}" data-session-action="pin" data-session-id="${session.id}" data-session-value="${session.pinned}">${icon("pin")}</button><button title="重新命名" aria-label="重新命名" data-session-action="rename" data-session-id="${session.id}">${icon("edit")}</button><button title="${state.archiveMode ? "還原對話" : "封存對話"}" aria-label="${state.archiveMode ? "還原對話" : "封存對話"}" data-session-action="archive" data-session-id="${session.id}" data-session-value="${state.archiveMode}">${icon("archive")}</button>${state.archiveMode ? `<button title="永久刪除" aria-label="永久刪除" data-session-action="delete" data-session-id="${session.id}">${icon("trash")}</button>` : ""}</div></div>`; }
@@ -142,23 +212,25 @@ function explainabilityPanel(result, key) {
   const summary = explain.summary || {};
   const list = (values, empty = "—") => Array.isArray(values) && values.length ? values.map((value) => `<li>${esc(value)}</li>`).join("") : `<li class="muted">${empty}</li>`;
   const feedback = explain.feedback?.supported && explain.feedback.queryRunId ? `<div class="query-feedback" data-feedback-box="${esc(explain.feedback.queryRunId)}"><div><b>這次回答有幫助嗎？</b><small>回饋只會綁定本次查詢，且不會改變資料權限。</small></div><div class="feedback-actions"><button class="button compact" data-feedback-rating="positive" data-feedback-run="${esc(explain.feedback.queryRunId)}">有幫助</button><button class="button compact" data-feedback-rating="negative" data-feedback-run="${esc(explain.feedback.queryRunId)}">需要改善</button></div><div class="feedback-negative" hidden><label>改善類別<select data-feedback-category><option value="">請選擇</option><option value="interpretation">問題理解</option><option value="source">資料來源</option><option value="calculation">計算方式</option><option value="incomplete">結果不完整</option><option value="scope">資料範圍</option><option value="other">其他</option></select></label><textarea data-feedback-comment maxlength="800" placeholder="補充說明（選填，最多 800 字）"></textarea><button class="button primary compact" data-feedback-submit data-feedback-run="${esc(explain.feedback.queryRunId)}">送出回饋</button></div></div>` : "";
-  return `<section class="query-explainability"><header class="explain-head"><div><span class="result-kicker">可解釋查詢</span><b>${esc(summary.headline || "查詢完成")}</b></div><span class="governance-badge">${icon("shield")}已套用治理</span></header><div class="explain-grid"><article><span class="explain-label">Query Understanding</span><h4>${esc(understanding.intent || "資料查詢")}</h4><dl class="explain-facts"><div><dt>指標</dt><dd><ul>${list(understanding.metrics)}</ul></dd></div><div><dt>維度</dt><dd><ul>${list(understanding.dimensions)}</ul></dd></div><div><dt>條件</dt><dd><ul>${list(understanding.filters)}</ul></dd></div><div><dt>時間</dt><dd>${esc(understanding.timeRange || "未指定")}</dd></div></dl></article><article><span class="explain-label">Data Sources / Governance</span><ul class="source-list">${(sources.tables || []).map((source) => `<li><b>${esc(source.label || source.name)}</b><small>${esc(source.name)}</small></li>`).join("") || "<li class=muted>已授權資料來源</li>"}</ul><div class="governance-chips"><span>${governance.scopeApplied ? "範圍已套用" : "範圍未指定"}</span><span>${governance.rowPolicyApplied ? "資料列規則已套用" : "資料列規則已檢查"}</span><span>${governance.columnPolicyApplied ? "欄位權限已檢查" : "欄位權限未指定"}</span><span>${governance.dlpApplied ? "敏感欄位已遮罩" : "DLP 未套用"}</span></div></article><article><span class="explain-label">How calculated</span><p>${esc(explain.explanation?.business || "此查詢已完成唯讀驗證與結果遮罩。")}</p><ul class="summary-list">${list(summary.highlights)}</ul>${summary.caveats?.length ? `<div class="explain-caveats"><ul>${list(summary.caveats)}</ul></div>` : ""}</article></div>${explain.explanation?.rawSqlAvailable && explain.explanation?.sql ? `<details class="sql-disclosure"><summary>檢視已驗證 SQL</summary><pre>${esc(explain.explanation.sql)}</pre></details>` : ""}${feedback}</section>`;
+  const explanationSql = typeof explain.explanation?.sql === "string" && explain.explanation.sql.trim() ? explain.explanation.sql.trim() : undefined;
+  return `<section class="query-explainability"><header class="explain-head"><div><span class="result-kicker">查詢說明</span><b>${esc(summary.headline || "結果摘要")}</b></div><span class="governance-badge">${icon("shield")}已套用治理</span></header><div class="explain-grid"><article><span class="explain-label">Query Understanding</span><h4>${esc(understanding.intent || "資料查詢")}</h4><dl class="explain-facts"><div><dt>指標</dt><dd><ul>${list(understanding.metrics)}</ul></dd></div><div><dt>維度</dt><dd><ul>${list(understanding.dimensions)}</ul></dd></div><div><dt>條件</dt><dd><ul>${list(understanding.filters)}</ul></dd></div><div><dt>時間</dt><dd>${esc(understanding.timeRange || "未指定")}</dd></div></dl></article><article><span class="explain-label">Data Sources / Governance</span><ul class="source-list">${(sources.tables || []).map((source) => `<li><b>${esc(source.label || source.name)}</b><small>${esc(source.name)}</small></li>`).join("") || "<li class=muted>已授權資料來源</li>"}</ul><div class="governance-chips"><span>${governance.scopeApplied ? "範圍已套用" : "範圍未指定"}</span><span>${governance.rowPolicyApplied ? "資料列規則已套用" : "資料列規則已檢查"}</span><span>${governance.columnPolicyApplied ? "欄位權限已檢查" : "欄位權限未指定"}</span><span>${governance.dlpApplied ? "敏感欄位已遮罩" : "DLP 未套用"}</span></div></article><article><span class="explain-label">How calculated</span><p>${esc(explain.explanation?.business || "此查詢已完成唯讀驗證與結果遮罩。")}</p><ul class="summary-list">${list(summary.highlights)}</ul>${summary.caveats?.length ? `<div class="explain-caveats"><ul>${list(summary.caveats)}</ul></div>` : ""}</article></div>${explanationSql && explain.explanation?.rawSqlAvailable ? `<details class="sql-disclosure" open><summary>檢視已驗證 SQL</summary><pre>${esc(explanationSql)}</pre></details>` : ""}${feedback}</section>`;
 }
 
 function resultPanel(result, key) {
   const rows = result.rows || []; const columns = [...new Set(rows.flatMap((row) => Object.keys(row)))]; const current = state.resultTabs.get(key) || "table";
   const rawSqlAvailable = result.explainability ? Boolean(result.explainability.explanation?.rawSqlAvailable) : has("view_schema");
-  const sql = rawSqlAvailable ? (result.explainability?.explanation?.sql || result.sql) : undefined;
+  const sqlCandidate = rawSqlAvailable ? (result.explainability?.explanation?.sql || result.sql) : undefined;
+  const sql = typeof sqlCandidate === "string" && sqlCandidate.trim() ? sqlCandidate.trim() : undefined;
   const tab = (id, label, disabled = false) => `<button class="result-tab ${current === id ? "active" : ""}" data-result-tab="${key}:${id}" ${disabled ? "disabled" : ""}>${label}</button>`;
   const rowsHtml = rows.slice(0, 100).map((row) => `<tr>${columns.map((column) => `<td>${esc(row[column])}</td>`).join("")}</tr>`).join("");
   const canChart = Boolean(rows.length && columns.some((column) => rows.some((row) => Number.isFinite(Number(row[column])))));
-  return `${explainabilityPanel(result, key)}<section class="query-result"><header><div><span class="result-kicker">查詢結果</span><b>${Number(result.rowCount ?? rows.length).toLocaleString()} 筆資料${result.truncated ? "（僅顯示前 100 筆）" : ""}</b></div><div class="result-actions">${result.maskedColumns?.length ? status(`已遮罩 ${result.maskedColumns.length} 欄`, "safe") : ""}${has("export") && sql ? `<button class="icon-button" title="匯出 CSV" aria-label="匯出 CSV" data-export="${encodeURIComponent(sql)}">${icon("export")}</button>` : ""}</div></header><nav class="result-tabs" aria-label="查詢結果檢視">${tab("table", "表格")}${tab("chart", "圖表", !canChart)}${sql ? tab("sql", "SQL") : ""}</nav><div class="result-content">${current === "chart" ? chartFor(rows) : current === "sql" && sql ? `<div class="sql-panel"><button class="copy-sql" data-copy-sql="${encodeURIComponent(sql)}">${icon("copy")}複製 SQL</button><pre>${esc(sql)}</pre></div>` : table(columns, rowsHtml, "query-table")}</div></section>`;
+  return `${explainabilityPanel(result, key)}<section class="query-result"><header><div><span class="result-kicker">查詢結果</span><b>${Number(result.rowCount ?? rows.length).toLocaleString()} 筆資料${result.truncated ? "（僅顯示前 100 筆）" : ""}</b></div><div class="result-actions">${result.maskedColumns?.length ? status(`已遮罩 ${result.maskedColumns.length} 欄`, "safe") : ""}${has("export") && sql ? `<button class="icon-button" title="匯出 CSV" aria-label="匯出 CSV" data-export="${encodeURIComponent(sql)}">${icon("export")}</button>` : ""}</div></header><nav class="result-tabs" aria-label="查詢結果檢視">${tab("table", "表格")}${tab("chart", "圖表", !canChart)}${sql ? tab("sql", "SQL") : ""}</nav><div class="result-content">${current === "chart" ? chartFor(rows) : current === "sql" && sql ? `<div class="sql-panel"><button class="copy-sql" data-copy-sql="${encodeURIComponent(sql)}">${icon("copy")}複製 SQL</button><pre>${esc(sql)}</pre></div>` : table(columns.map(resultColumnLabel), rowsHtml, "query-table")}</div></section>`;
 }
 
 async function renderChat() {
   await loadSessions();
   if (state.activeSession && !state.messages.length) await loadMessages(state.activeSession);
-  const transcript = !state.activeSession ? empty("開始一個資料問題", "輸入自然語言問題，QueryMind 會使用已同步的 Schema 和商業字典產生受控的唯讀查詢。", `<div class="suggestions"><button data-prompt="請依商品列出銷售額">依商品列出銷售額</button><button data-prompt="目前有多少筆未取消訂單？">未取消訂單數</button><button data-prompt="請找出最近處理中的客服案件">客服案件概況</button></div>`) : `${state.messages.map((message, index) => `<article class="message ${message.role}"><div class="message-avatar">${message.role === "user" ? esc((state.user?.displayName || "你").slice(0, 1)) : "Q"}</div><div class="message-content"><div class="message-meta"><b>${message.role === "user" ? "你" : "QueryMind"}</b><time>${shortDate(message.created_at)}</time></div><p>${esc(message.content)}</p>${message.metadata?.sql ? resultPanel(message.metadata, message.id || `stored-${index}`) : ""}</div></article>`).join("")}${state.result ? `<article class="message assistant"><div class="message-avatar">Q</div><div class="message-content"><div class="message-meta"><b>QueryMind</b><time>剛剛</time></div><p>${esc(state.result.answer || "查詢完成。")}</p>${resultPanel(state.result, state.result.id || "transient")}</div></article>` : ""}${state.sending ? `<article class="message assistant thinking"><div class="message-avatar">Q</div><div class="message-content"><b>QueryMind 正在分析資料</b><span><i></i><i></i><i></i></span></div></article>` : ""}`;
+  const transcript = !state.activeSession ? empty("開始一個資料問題", "輸入自然語言問題，QueryMind 會使用已同步的 Schema 和商業字典產生受控的唯讀查詢。", `<div class="suggestions"><button data-prompt="請依商品列出銷售額">依商品列出銷售額</button><button data-prompt="目前有多少筆未取消訂單？">未取消訂單數</button><button data-prompt="請找出最近處理中的客服案件">客服案件概況</button></div>`) : `${state.messages.map((message, index) => `<article class="message ${message.role}"><div class="message-avatar">${message.role === "user" ? esc((state.user?.displayName || "你").slice(0, 1)) : "Q"}</div><div class="message-content"><div class="message-meta"><b>${message.role === "user" ? "你" : "QueryMind"}</b><time>${shortDate(message.created_at)}</time></div>${message.role === "assistant" ? `<div class="message-answer">${renderMarkdown(message.content)}</div>` : `<p>${esc(message.content)}</p>`}${message.metadata?.sql ? resultPanel(message.metadata, message.id || `stored-${index}`) : ""}</div></article>`).join("")}${state.result ? `<article class="message assistant"><div class="message-avatar">Q</div><div class="message-content"><div class="message-meta"><b>QueryMind</b><time>剛剛</time></div><div class="message-answer">${renderMarkdown(state.result.answer || "查詢完成。")}</div>${resultPanel(state.result, state.result.id || "transient")}</div></article>` : ""}${state.sending ? `<article class="message assistant thinking"><div class="message-avatar">Q</div><div class="message-content"><b>QueryMind 正在分析資料</b><span><i></i><i></i><i></i></span></div></article>` : ""}`;
   const sessionList = state.sessions.map(sessionRow).join("") || `<p class="rail-empty">${state.archiveMode ? "沒有封存的對話" : "尚無對話紀錄"}</p>`;
   return shell(`<section class="chat-workspace"><aside class="session-rail"><header><div><span class="eyebrow">${state.archiveMode ? "封存對話" : "對話紀錄"}</span><b>${state.archiveMode ? "已封存" : "Sessions"}</b></div><button class="icon-button" data-action="create-session" aria-label="建立新對話" title="建立新對話">${icon("plus")}</button></header><div class="session-list">${sessionList}</div><button class="archive-toggle" data-action="toggle-archive">${icon("archive")}${state.archiveMode ? "返回目前對話" : "查看封存對話"}</button></aside><div class="chat-canvas"><header class="chat-head"><div><span class="eyebrow">AI analyst</span><h2>${state.activeSession ? esc(state.sessions.find((session) => session.id === state.activeSession)?.title || "分析對話") : "Ask your data"}</h2></div>${state.activeSession ? `<button class="button secondary compact" data-action="create-session">${icon("plus")}新對話</button>` : ""}</header><div class="conversation" aria-live="polite">${transcript}</div><form id="chat-form" class="composer"><label class="sr-only" for="chat-prompt">輸入資料問題</label><textarea id="chat-prompt" name="prompt" placeholder="請輸入你的問題…" maxlength="8000" ${state.sending || state.archiveMode ? "disabled" : ""}></textarea><div><small>${state.archiveMode ? "請先返回目前對話才能提問" : "結果限於唯讀 D1；敏感欄位會自動遮罩。"}</small><button class="button primary send-button" ${state.sending || state.archiveMode ? "disabled" : ""}>${state.sending ? "分析中…" : `${icon("send")}送出`}</button></div></form></div></section>`, "chat");
 }
@@ -177,10 +249,485 @@ async function renderAdminAudit() { const data = await load("admin-audit", "/api
 async function renderAdminSystem() { const data = await load("admin-system", "/api/v1/admin/system"); return shell(`<section class="system-grid"><article class="panel"><span class="eyebrow">Runtime</span><h2>系統狀態</h2><dl class="definition-grid"><div><dt>部署環境</dt><dd>${esc(data.environment)}</dd></div><div><dt>應用資料庫</dt><dd>${esc(data.database.app)}</dd></div><div><dt>商業資料庫</dt><dd>${esc(data.database.data)}</dd></div><div><dt>Schema 表數</dt><dd>${data.database.schemaTables}</dd></div><div><dt>AI Gateway</dt><dd>${data.aiGatewayConfigured ? status("已設定", "safe") : status("待設定", "warning")}</dd></div></dl></article><article class="panel"><span class="eyebrow">Design boundary</span><h2>架構限制</h2><ul class="plain-list">${data.limitations.map((item) => `<li>${icon("check")}${esc(item)}</li>`).join("")}</ul></article></section>`, "admin-system"); }
 function renderProfile() { return shell(`<section class="profile-layout"><article class="profile-summary"><span class="avatar profile-avatar">${esc((state.user?.displayName || state.user?.email || "Q").slice(0, 1).toUpperCase())}</span><span class="eyebrow">Account</span><h2>${esc(state.user?.displayName || "QueryMind user")}</h2><p>${esc(state.user?.email)}</p>${status(state.user?.roleName || "member", "safe")}<p class="muted">每次查詢最多 ${Number(state.user?.permissions?.maxRowsPerQuery || 0).toLocaleString()} 列。</p></article><article class="panel"><span class="eyebrow">Security</span><h2>變更密碼</h2><p>密碼最少 12 個字元；變更後目前瀏覽器工作階段仍可使用。</p><form id="password-form" class="form-grid"><label>目前密碼<input name="currentPassword" type="password" autocomplete="current-password" minlength="12" required></label><label>新密碼<input name="newPassword" type="password" autocomplete="new-password" minlength="12" required></label><button class="button primary">${icon("check")}更新密碼</button></form><hr><button class="button danger-outline" data-action="logout">${icon("logout")}登出</button></article></section>`, "profile"); }
 
-const VIEWS = { dashboard: renderDashboard, chat: renderChat, schema: renderSchema, dictionary: renderDictionary, templates: renderTemplates, insights: renderInsights, usage: renderUsage, source: renderSource, "admin-overview": renderAdminOverview, "admin-users": renderAdminUsers, "admin-roles": renderAdminRoles, "admin-invitations": renderAdminInvitations, "admin-audit": renderAdminAudit, "admin-system": renderAdminSystem, profile: async () => renderProfile() };
+const SEMANTIC_TYPES = ["TERM", "DIMENSION", "METRIC", "RELATIONSHIP"];
+const SEMANTIC_ASSET_STATUSES = ["ACTIVE", "DEPRECATED"];
+const SEMANTIC_REVISION_STATUSES = ["DRAFT", "IN_REVIEW", "APPROVED", "REJECTED"];
+const SEMANTIC_UNITS = ["COUNT", "CURRENCY", "QUANTITY", "PERCENT", "RATING", "UNKNOWN"];
+const SEMANTIC_CARDINALITIES = ["ONE_TO_ONE", "ONE_TO_MANY", "MANY_TO_ONE", "MANY_TO_MANY"];
+const SEMANTIC_FILTER_OPERATORS = ["EQ", "NEQ", "IN", "NOT_IN", "IS_NULL", "IS_NOT_NULL"];
+
+function semanticTone(value) {
+  if (value === "APPROVED" || value === "ACTIVE") return "safe";
+  if (value === "IN_REVIEW") return "warning";
+  if (value === "REJECTED" || value === "DEPRECATED") return "danger";
+  return "neutral";
+}
+function semanticStatus(value) { return status(value || "—", semanticTone(value)); }
+function semanticError(error) {
+  if (error?.code === "RBAC_FORBIDDEN") return "你沒有執行此語意治理操作的權限。";
+  if (error?.code === "API_KEY_RESTRICTED") return "語意治理異動必須使用瀏覽器登入工作階段。";
+  if (error?.code === "SEMANTIC_STATE_CONFLICT") return "伺服器狀態已變更；請重新整理後再試。";
+  if (error?.code === "SEMANTIC_SCHEMA_UNAVAILABLE") return "Schema Catalog 尚未就緒，暫時無法建立或送審語意定義。";
+  if (error?.code === "SUGGESTION_STALE") return "這項 AI 建議所依據的 Schema 已變更，請重新產生建議。";
+  if (error?.code === "SUGGESTION_DUPLICATE") return "已有相同類型、名稱與領域的 Semantic Asset，請調整草稿後再試。";
+  if (error?.code === "SUGGESTION_SOURCE_FORBIDDEN") return "目前角色已無法存取此建議的所有來源欄位。";
+  if (error?.code === "SUGGESTION_CANDIDATES_EMPTY") return "所選資料表沒有可安全建立的語意候選項目。";
+  if (error?.code === "AI_NOT_CONFIGURED" || error?.code === "AI_GATEWAY_ERROR" || error?.code === "AI_GATEWAY_TIMEOUT") return "AI Gateway 暫時無法產生建議；未建立任何部分結果。";
+  if (error?.code === "SUGGESTION_OUTPUT_INVALID") return "AI 回覆未通過受控結構驗證；未建立任何建議。";
+  if (error?.code === "SEMANTIC_VALIDATION_ERROR" || error?.code === "SEMANTIC_CATALOG_REFERENCE_INVALID") return "請檢查語意定義、來源欄位與生命週期狀態。";
+  return "語意治理操作未完成，請確認輸入後再試。";
+}
+function invalidateSemantics() {
+  for (const key of state.cache.keys()) if (String(key).startsWith("semantics")) state.cache.delete(key);
+}
+function semanticSourceValue(source) { return source?.table && source?.column ? `${source.table}.${source.column}` : ""; }
+function semanticSourceFromValue(value, field = "來源欄位") {
+  const match = /^([A-Za-z_][A-Za-z0-9_]*)\.([A-Za-z_][A-Za-z0-9_]*)$/u.exec(String(value || ""));
+  if (!match) throw new Error(`${field} 必須選擇 Schema Catalog 中的欄位。`);
+  return { table: match[1], column: match[2] };
+}
+function semanticCatalogFromContext(context) {
+  const tables = [];
+  for (const line of String(context || "").split("\n")) {
+    const match = /^([A-Za-z_][A-Za-z0-9_]*)\((.*)\)/u.exec(line.trim());
+    if (!match) continue;
+    const columns = match[2].split(",").map((item) => /^\s*([A-Za-z_][A-Za-z0-9_]*)/u.exec(item)?.[1]).filter(Boolean);
+    if (columns.length) tables.push({ table: match[1], columns });
+  }
+  return tables;
+}
+async function semanticCatalog() {
+  if (!has("view_schema")) return [];
+  try { return semanticCatalogFromContext((await load("semantics-schema", "/api/v1/schema")).context); } catch { return []; }
+}
+async function semanticSuggestionCatalog() {
+  const data = await api("/api/v1/semantics/suggestions/catalog");
+  return data.tables || [];
+}
+function semanticOption(value, label, selected = false) { return `<option value="${esc(value)}" ${selected ? "selected" : ""}>${esc(label)}</option>`; }
+function semanticSourceSelect(name, catalog, value = "", options = {}) {
+  const required = options.required ? "required" : "";
+  const disabled = !catalog.length ? "disabled" : "";
+  const blank = options.blank === false ? "" : semanticOption("", options.placeholder || "選擇欄位", !value);
+  const values = catalog.flatMap(({ table: tableName, columns }) => columns.map((column) => {
+    const source = `${tableName}.${column}`;
+    return semanticOption(source, source, source === value);
+  })).join("");
+  return `<select name="${esc(name)}" data-semantic-source ${required} ${disabled}>${blank}${values}</select>`;
+}
+function semanticTableSelect(name, catalog, value = "", required = true) {
+  const disabled = !catalog.length ? "disabled" : "";
+  return `<select name="${esc(name)}" ${required ? "required" : ""} ${disabled}>${semanticOption("", "選擇資料表", !value)}${catalog.map((item) => semanticOption(item.table, item.table, item.table === value)).join("")}</select>`;
+}
+function semanticDefaultContract(type, asset = {}) {
+  const common = { canonicalName: asset.canonicalName || "", displayName: asset.displayName || "", definition: "", domain: asset.domain || "", semanticDependencies: [] };
+  if (type === "TERM") return common;
+  if (type === "DIMENSION") return { ...common, source: {}, dataType: "TEXT", allowedOperations: ["GROUP", "FILTER"] };
+  if (type === "METRIC") return { ...common, sources: [], expression: { kind: "SUM", argument: { kind: "COLUMN", source: {} } }, defaultFilters: [], nativeGrain: { kind: "ENTITY", key: "entity", source: { table: "", keyColumns: [] } }, unit: "COUNT" };
+  return { ...common, leftTable: "", rightTable: "", cardinality: "ONE_TO_MANY", joinKeys: [] };
+}
+function semanticExpressionText(expression) {
+  if (!expression || typeof expression !== "object") return "—";
+  if (expression.kind === "COLUMN") return `${expression.source?.table || "?"}.${expression.source?.column || "?"}`;
+  if (expression.kind === "LITERAL") return String(expression.value);
+  if (expression.kind === "COUNT") return expression.mode === "ROWS" ? "COUNT(rows)" : `COUNT(${semanticExpressionText({ kind: "COLUMN", source: expression.source })})`;
+  if (expression.kind === "COUNT_DISTINCT") return `COUNT DISTINCT ${semanticExpressionText({ kind: "COLUMN", source: expression.source })}`;
+  if (["SUM", "AVG", "MIN", "MAX"].includes(expression.kind)) return `${expression.kind}(${semanticExpressionText(expression.argument)})`;
+  if (["ADD", "SUBTRACT", "MULTIPLY", "DIVIDE"].includes(expression.kind)) return `${expression.kind}(${semanticExpressionText(expression.left)}, ${semanticExpressionText(expression.right)})`;
+  return "Bounded expression";
+}
+function semanticDefinition(contract, assetType) {
+  if (!contract) return "";
+  const common = `<section class="semantic-section"><h3>Business definition</h3><p>${esc(contract.definition || "尚未提供定義。")}</p></section>`;
+  if (assetType === "TERM") return `${common}${contract.source ? `<section class="semantic-section"><h3>Source mapping</h3><code>${esc(semanticSourceValue(contract.source))}</code></section>` : ""}`;
+  if (assetType === "DIMENSION") return `${common}<section class="semantic-section"><h3>Dimension contract</h3><dl class="definition-grid semantic-definition-grid"><div><dt>Source</dt><dd><code>${esc(semanticSourceValue(contract.source))}</code></dd></div><div><dt>Data type</dt><dd>${esc(contract.dataType)}</dd></div><div><dt>Allowed operations</dt><dd>${esc((contract.allowedOperations || []).join(", "))}</dd></div></dl></section>${semanticGrainSummary(contract.nativeGrain)}`;
+  if (assetType === "METRIC") return `${common}<section class="semantic-section"><h3>Metric Contract</h3><dl class="definition-grid semantic-definition-grid"><div><dt>Formula</dt><dd><code>${esc(semanticExpressionText(contract.expression))}</code></dd></div><div><dt>Unit</dt><dd>${esc(contract.unit || "—")}${contract.currency ? ` · ${esc(contract.currency)}` : ""}</dd></div><div><dt>Default filters</dt><dd>${esc((contract.defaultFilters || []).map((item) => `${semanticSourceValue(item.field)} ${item.operator}`).join(", ") || "None")}</dd></div></dl></section>${semanticGrainSummary(contract.nativeGrain)}`;
+  return `${common}<section class="semantic-section"><h3>Relationship Contract</h3><dl class="definition-grid semantic-definition-grid"><div><dt>Left entity</dt><dd><code>${esc(contract.leftTable)}</code></dd></div><div><dt>Right entity</dt><dd><code>${esc(contract.rightTable)}</code></dd></div><div><dt>Cardinality</dt><dd>${esc(contract.cardinality)}</dd></div></dl><div class="semantic-key-list">${(contract.joinKeys || []).map((key, index) => `<div><span>${index + 1}</span><code>${esc(`${key.leftTable}.${key.leftColumn}`)}</code><b>→</b><code>${esc(`${key.rightTable}.${key.rightColumn}`)}</code></div>`).join("") || '<p class="muted">No join keys.</p>'}</div></section>`;
+}
+function semanticGrainSummary(grain) {
+  if (!grain) return "";
+  const source = grain.kind === "ENTITY" ? `${grain.source?.table || "?"}.${(grain.source?.keyColumns || []).join(", ")}` : semanticSourceValue(grain.source);
+  return `<section class="semantic-section"><h3>Native grain</h3><dl class="definition-grid semantic-definition-grid"><div><dt>Kind</dt><dd>${esc(grain.kind)}</dd></div><div><dt>Key</dt><dd><code>${esc(grain.key)}</code></dd></div><div><dt>Physical anchor</dt><dd><code>${esc(source)}</code></dd></div>${grain.timeUnit ? `<div><dt>Time unit</dt><dd>${esc(grain.timeUnit)}</dd></div>` : ""}</dl></section>`;
+}
+
+function semanticQueryString() {
+  const filter = state.semanticFilters;
+  const query = new URLSearchParams({ page: String(filter.page), limit: String(filter.limit) });
+  for (const [key, value] of Object.entries({ search: filter.search, type: filter.type, assetStatus: filter.assetStatus, revisionStatus: filter.revisionStatus, domain: filter.domain })) if (value) query.set(key, value);
+  return query.toString();
+}
+function semanticFilterSelect(name, values, selected, label) { return `<select name="${name}" aria-label="${esc(label)}">${semanticOption("", `所有${label}`, !selected)}${values.map((value) => semanticOption(value, value, value === selected)).join("")}</select>`; }
+function semanticWorkspaceTabs() { return `<nav class="semantic-tabs semantic-workspace-tabs" aria-label="Semantic Registry workspace"><button class="${state.semanticWorkspace === "assets" ? "active" : ""}" data-semantic-workspace="assets" aria-selected="${state.semanticWorkspace === "assets"}">Semantic Assets</button>${has("manage_semantic_drafts") ? `<button class="${state.semanticWorkspace === "suggestions" ? "active" : ""}" data-semantic-workspace="suggestions" aria-selected="${state.semanticWorkspace === "suggestions"}">AI Suggestions</button>` : ""}</nav>`; }
+async function renderSemanticRegistry() {
+  const key = `semantics-list:${semanticQueryString()}`;
+  const data = await load(key, `/api/v1/semantics?${semanticQueryString()}`);
+  const items = data.items || [];
+  const filter = state.semanticFilters;
+  const create = has("manage_semantic_drafts") ? button("Create Semantic Asset", { kind: "primary", icon: "plus", attrs: 'data-action="create-semantic"' }) : "";
+  const toolbar = `<form class="filter-bar semantic-filter-bar" data-semantic-filters><label>${icon("search")}<input name="search" aria-label="搜尋語意定義" value="${esc(filter.search)}" maxlength="120" placeholder="搜尋名稱、領域或標籤"></label>${semanticFilterSelect("type", SEMANTIC_TYPES, filter.type, "類型")}${semanticFilterSelect("assetStatus", SEMANTIC_ASSET_STATUSES, filter.assetStatus, "Asset 狀態")}${semanticFilterSelect("revisionStatus", SEMANTIC_REVISION_STATUSES, filter.revisionStatus, "Revision 狀態")}<input class="semantic-domain-filter" name="domain" aria-label="依領域篩選" value="${esc(filter.domain)}" maxlength="80" placeholder="領域"><button class="button secondary compact" type="submit">篩選</button></form>`;
+  if (!items.length) return shell(`<section class="panel panel-open semantic-registry"><header class="panel-head"><div><span class="eyebrow">Governed design-time metadata</span><h2>Semantic Registry</h2><p>集中維護指標、維度、詞彙與關聯的企業定義。此模組不會參與目前的查詢執行期。</p></div></header>${semanticWorkspaceTabs()}${toolbar}${empty("尚未建立語意定義", "Semantic Registry 用於定義企業一致的指標、維度、詞彙與關聯；建立草稿後仍須經過治理流程。", create)}</section>`, "semantics");
+  const rows = items.map((item) => `<tr><td><button class="semantic-name-button" data-open-semantic="${esc(item.assetId)}"><b>${esc(item.displayName)}</b><small>${esc(item.canonicalName)}</small></button></td><td>${semanticStatus(item.assetType)}</td><td>${esc(item.domain || "—")}</td><td><code>${esc(item.ownerUserId)}</code></td><td>${semanticStatus(item.assetStatus)}</td><td>${semanticStatus(item.latestRevision?.status)}</td><td>${item.latestRevision ? `v${esc(item.latestRevision.revisionNumber)}` : "—"}</td><td class="row-actions"><button class="text-button" data-open-semantic="${esc(item.assetId)}">檢視</button></td></tr>`).join("");
+  const page = data.page || { page: 1, total: items.length, hasNext: false };
+  const pagination = `<footer class="semantic-pagination"><small>第 ${Number(page.page).toLocaleString()} 頁 · 共 ${Number(page.total).toLocaleString()} 個 Assets</small><span><button class="button secondary compact" data-semantic-page="${Math.max(1, Number(page.page) - 1)}" ${Number(page.page) <= 1 ? "disabled" : ""}>上一頁</button><button class="button secondary compact" data-semantic-page="${Number(page.page) + 1}" ${page.hasNext ? "" : "disabled"}>下一頁</button></span></footer>`;
+  return shell(`<section class="panel panel-open semantic-registry"><header class="panel-head"><div><span class="eyebrow">Governed design-time metadata</span><h2>Semantic Registry</h2><p>在不改變 AI、SQL 或資料執行期的前提下，建立可追溯的企業語意定義。</p></div>${create}</header>${semanticWorkspaceTabs()}${toolbar}${table(["Name", "Type", "Domain", "Owner", "Asset", "Latest revision", "Version", ""], rows, "semantic-table")}${pagination}</section>`, "semantics");
+}
+function semanticSuggestionQueryString() {
+  const filter = state.semanticSuggestionFilters;
+  const query = new URLSearchParams({ page: String(filter.page), limit: String(filter.limit) });
+  for (const [key, value] of Object.entries({ status: filter.status, type: filter.type, stale: filter.stale })) if (value) query.set(key, value);
+  return query.toString();
+}
+function suggestionEvidence(item) {
+  const evidence = item.suggestion?.evidence || { tables: [], columns: [], foreignKeys: [] };
+  const fields = [...(evidence.columns || []), ...(evidence.tables || []).filter((table) => !(evidence.columns || []).some((column) => column.startsWith(`${table}.`)))];
+  return `<div class="semantic-source-list">${fields.map((field) => `<div><span>${semanticStatus(field.includes(".") ? "COLUMN" : "TABLE")}</span><code>${esc(field)}</code><small>catalog evidence</small></div>`).join("") || '<p class="muted">No physical source mapping.</p>'}</div>${(evidence.foreignKeys || []).length ? `<div class="semantic-key-list">${evidence.foreignKeys.map((key, index) => `<div><span>${index + 1}</span><code>${esc(`${key.referencedTable}.${key.referencedColumn}`)}</code><b>→</b><code>${esc(`${key.table}.${key.column}`)}</code></div>`).join("")}</div>` : ""}`;
+}
+function suggestionCard(item) {
+  const suggestion = item.suggestion || {};
+  const contract = suggestion.contract || {};
+  const active = item.status === "OPEN" && !item.isStale;
+  const action = active ? `<div class="semantic-actions"><button class="button secondary" data-use-suggestion="${esc(item.suggestionId)}">${icon("edit")}使用此建議建立草稿</button><button class="button danger-outline" data-dismiss-suggestion="${esc(item.suggestionId)}">Dismiss</button></div>` : "";
+  const uncertainty = `<div class="suggestion-uncertainty"><section><h4>Assumptions</h4><ul>${(suggestion.assumptions || []).map((value) => `<li>${esc(value)}</li>`).join("") || "<li>None recorded.</li>"}</ul></section><section><h4>Open questions</h4><ul>${(suggestion.openQuestions || []).map((value) => `<li>${esc(value)}</li>`).join("") || "<li>None recorded.</li>"}</ul></section></div>`;
+  return `<article class="semantic-suggestion-card" data-suggestion-card="${esc(item.suggestionId)}"><header><div><span class="suggestion-badge">AI Suggested</span><h3>${esc(item.displayName)}</h3><p><code>${esc(item.canonicalName)}</code> · ${semanticStatus(item.suggestionType)} · ${semanticStatus(item.confidence)}</p></div><div>${semanticStatus(item.isStale ? "STALE" : item.status)}</div></header><p class="suggestion-disclaimer">AI 建議僅依目前可授權存取的 Schema Metadata 產生，不代表企業正式定義。建立草稿後仍需經人工治理流程。</p><section><h4>Definition</h4><p>${esc(suggestion.definition || "—")}</p></section>${contract.expression ? `<section><h4>Metric AST</h4><code>${esc(semanticExpressionText(contract.expression))}</code>${semanticGrainSummary(contract.nativeGrain)}</section>` : ""}${contract.joinKeys ? `<section><h4>Relationship</h4>${suggestionEvidence(item)}</section>` : `<section><h4>Sources & evidence</h4>${suggestionEvidence(item)}</section>`}${uncertainty}<footer><small>Schema snapshot <code>${esc(item.schemaSnapshotId)}</code> · ${fmtDate(item.createdAt)}</small>${action}</footer></article>`;
+}
+async function renderSemanticSuggestions() {
+  const key = `semantics-suggestions:${semanticSuggestionQueryString()}`;
+  const data = await load(key, `/api/v1/semantics/suggestions?${semanticSuggestionQueryString()}`);
+  const filter = state.semanticSuggestionFilters;
+  const toolbar = `<form class="filter-bar semantic-filter-bar suggestion-filter-bar" data-suggestion-filters>${semanticFilterSelect("status", ["OPEN", "ACCEPTED", "DISMISSED"], filter.status, "狀態")}${semanticFilterSelect("type", SEMANTIC_TYPES, filter.type, "類型")}${semanticFilterSelect("stale", ["true", "false"], filter.stale, "Stale")}<button class="button secondary compact" type="submit">篩選</button></form>`;
+  const generate = button("Generate Suggestions", { kind: "primary", icon: "plus", attrs: 'data-action="generate-semantic-suggestions"' });
+  const cards = (data.items || []).map(suggestionCard).join("");
+  return shell(`<section class="panel panel-open semantic-registry semantic-suggestions"><header class="panel-head"><div><span class="eyebrow">Governed design-time AI</span><h2>AI Schema Suggestions</h2><p>只以目前可授權的結構化 Schema Metadata 產生草稿建議；不會查詢資料列、不會執行 SQL，也不會自動發佈語意定義。</p></div>${generate}</header>${semanticWorkspaceTabs()}${toolbar}${cards || empty("尚無 AI 語意建議", "選擇少量已授權資料表後，系統會產出需人工檢閱的草稿建議。", generate)}</section>`, "semantics");
+}
+function semanticTab(id, label, active) { return `<button class="${active ? "active" : ""}" data-semantic-tab="${id}" aria-selected="${active}">${esc(label)}</button>`; }
+async function renderSemanticDetail(assetId) {
+  const [detail, revisions] = await Promise.all([
+    load(`semantics-detail:${assetId}`, `/api/v1/semantics/${encodeURIComponent(assetId)}`),
+    load(`semantics-revisions:${assetId}`, `/api/v1/semantics/${encodeURIComponent(assetId)}/revisions`),
+  ]);
+  const latest = detail.latestRevision;
+  const tabs = ["overview", "definition", "sources", "aliases", "history"];
+  if (has("review_semantics")) tabs.push("review");
+  if (!tabs.includes(state.semanticDetailTab)) state.semanticDetailTab = "overview";
+  const canManage = has("manage_semantic_drafts");
+  const canReview = has("review_semantics");
+  const actions = `${canManage ? `<button class="button secondary" data-new-semantic-revision="${esc(assetId)}">${icon("plus")}New Draft Revision</button>` : ""}${canManage && latest.status === "DRAFT" ? `<button class="button secondary" data-edit-semantic="${esc(assetId)}">${icon("edit")}Edit Draft</button><button class="button primary" data-submit-semantic="${esc(assetId)}" data-revision-id="${esc(latest.revisionId)}">Submit for Review</button>` : ""}${canReview && latest.status === "IN_REVIEW" ? `<button class="button secondary" data-review-semantic="request-changes" data-asset-id="${esc(assetId)}" data-revision-id="${esc(latest.revisionId)}">Request Changes</button><button class="button danger-outline" data-review-semantic="reject" data-asset-id="${esc(assetId)}" data-revision-id="${esc(latest.revisionId)}">Reject</button>` : ""}`;
+  let panel = "";
+  if (state.semanticDetailTab === "overview") panel = `<section class="semantic-detail-grid"><article class="semantic-section"><h3>Asset</h3><dl class="definition-grid semantic-definition-grid"><div><dt>Canonical name</dt><dd><code>${esc(detail.asset.canonicalName)}</code></dd></div><div><dt>Type</dt><dd>${semanticStatus(detail.asset.assetType)}</dd></div><div><dt>Domain</dt><dd>${esc(detail.asset.domain || "—")}</dd></div><div><dt>Owner</dt><dd><code>${esc(detail.asset.ownerUserId)}</code></dd></div><div><dt>Asset status</dt><dd>${semanticStatus(detail.asset.assetStatus)}</dd></div><div><dt>Created</dt><dd>${fmtDate(detail.asset.createdAt)}</dd></div><div><dt>Updated</dt><dd>${fmtDate(detail.asset.updatedAt)}</dd></div></dl></article><article class="semantic-section"><h3>Revision summary</h3><dl class="definition-grid semantic-definition-grid"><div><dt>Latest revision</dt><dd>v${esc(latest.revisionNumber)} · ${semanticStatus(latest.status)}</dd></div><div><dt>Schema Snapshot</dt><dd><code>${esc(latest.schemaSnapshotId)}</code></dd></div><div><dt>Change reason</dt><dd>${esc(latest.changeReason || "—")}</dd></div><div><dt>Current approved</dt><dd>${detail.currentApprovedRevision ? `v${esc(detail.currentApprovedRevision.revisionNumber)}` : "None"}</dd></div></dl></article></section><section class="semantic-section"><h3>Asset description</h3><p>${esc(detail.asset.description || "尚未提供 Asset 說明。")}</p></section>`;
+  if (state.semanticDetailTab === "definition") panel = semanticDefinition(latest.contract, detail.asset.assetType);
+  if (state.semanticDetailTab === "sources") panel = `<section class="semantic-section"><h3>Provenance and source mappings</h3><div class="semantic-source-list">${(detail.normalizedSources || []).map((source) => `<div><span>${semanticStatus(source.sourceKind)}</span><code>${source.sourceKind === "SEMANTIC_DEPENDENCY" ? `${source.referencedAssetId} / ${source.referencedRevisionId}` : source.columnName ? `${source.tableName}.${source.columnName}` : source.tableName}</code><small>${esc(source.role)}</small></div>`).join("") || '<p class="muted">No normalized source mappings.</p>'}</div>${detail.relationshipKeys?.length ? `<div class="semantic-key-list">${detail.relationshipKeys.map((key) => `<div><span>${key.ordinalPosition + 1}</span><code>${esc(`${key.leftTable}.${key.leftColumn}`)}</code><b>→</b><code>${esc(`${key.rightTable}.${key.rightColumn}`)}</code></div>`).join("")}</div>` : ""}</section>`;
+  if (state.semanticDetailTab === "aliases") panel = `<section class="semantic-section"><h3>Aliases</h3><div class="semantic-alias-list">${(detail.aliases || []).map((alias) => `<span>${esc(alias.alias)}${alias.locale ? `<small>${esc(alias.locale)}</small>` : ""}</span>`).join("") || '<p class="muted">No aliases.</p>'}</div></section>`;
+  if (state.semanticDetailTab === "history") panel = `<section class="semantic-section"><h3>Revision history</h3>${table(["Version", "Status", "Schema Snapshot", "Created", "Submitted", "Change reason"], (revisions.items || []).map((revision) => `<tr><td>v${esc(revision.revisionNumber)}</td><td>${semanticStatus(revision.status)}</td><td><code>${esc(revision.schemaSnapshotId)}</code></td><td>${fmtDate(revision.createdAt)}</td><td>${fmtDate(revision.submittedAt)}</td><td>${esc(revision.changeReason || "—")}</td></tr>`).join(""), "semantic-table")}</section>`;
+  if (state.semanticDetailTab === "review") {
+    const reviews = await load(`semantics-reviews:${assetId}:${latest.revisionId}`, `/api/v1/semantics/${encodeURIComponent(assetId)}/revisions/${encodeURIComponent(latest.revisionId)}/reviews`);
+    panel = `<section class="semantic-section"><h3>Review history</h3><div class="semantic-review-list">${(reviews.items || []).map((review) => `<article><header>${semanticStatus(review.action)}<time>${fmtDate(review.createdAt)}</time></header><p>${esc(review.comment || "No comment")}</p><small>Reviewer: <code>${esc(review.reviewerUserId)}</code></small></article>`).join("") || '<p class="muted">No review activity.</p>'}</div></section>`;
+  }
+  return shell(`<section class="semantic-detail"><header class="semantic-detail-head"><div><button class="text-button semantic-back" data-semantic-back>${icon("chevron")}Back to Registry</button><span class="eyebrow">Semantic Asset</span><h2>${esc(detail.asset.displayName)}</h2><p>${esc(detail.asset.domain || "Unassigned domain")} · ${semanticStatus(detail.asset.assetType)} ${semanticStatus(detail.asset.assetStatus)}</p></div><div class="semantic-actions">${actions}</div></header><nav class="semantic-tabs" aria-label="Semantic asset sections">${tabs.map((tab) => semanticTab(tab, tab === "overview" ? "Overview" : tab === "definition" ? "Definition" : tab === "sources" ? "Sources" : tab === "aliases" ? "Aliases" : tab === "history" ? "Revision History" : "Review", state.semanticDetailTab === tab)).join("")}</nav>${panel}</section>`, "semantics");
+}
+async function renderSemantics() { return state.semanticAssetId ? renderSemanticDetail(state.semanticAssetId) : state.semanticWorkspace === "suggestions" && has("manage_semantic_drafts") ? renderSemanticSuggestions() : renderSemanticRegistry(); }
+
+function semanticAliasRows(aliases = []) {
+  return aliases.map((item) => `<div class="semantic-repeat-row" data-semantic-alias><label>Alias<input name="semantic-alias" maxlength="120" value="${esc(item.alias || "")}" required></label><label>Locale<input name="semantic-alias-locale" maxlength="16" value="${esc(item.locale || "")}" placeholder="zh-TW"></label><button class="icon-button danger" type="button" data-remove-semantic-row aria-label="移除別名">${icon("trash")}</button></div>`).join("");
+}
+function semanticDependencyRows(dependencies = []) {
+  return dependencies.map((item) => `<div class="semantic-repeat-row" data-semantic-dependency><label>Asset ID<input name="semantic-dependency-asset" maxlength="128" value="${esc(item.referencedAssetId || "")}" required></label><label>Revision ID<input name="semantic-dependency-revision" maxlength="128" value="${esc(item.referencedRevisionId || "")}" required></label><button class="icon-button danger" type="button" data-remove-semantic-row aria-label="移除相依性">${icon("trash")}</button></div>`).join("");
+}
+function semanticGrainFields(prefix, grain, catalog, optional = false) {
+  const entity = grain?.kind === "ENTITY";
+  const selected = entity ? (grain.source?.keyColumns || []).map((column) => `${grain.source?.table}.${column}`) : [semanticSourceValue(grain?.source)].filter(Boolean);
+  const values = catalog.flatMap(({ table: tableName, columns }) => columns.map((column) => semanticOption(`${tableName}.${column}`, `${tableName}.${column}`, selected.includes(`${tableName}.${column}`)))).join("");
+  const none = optional ? semanticOption("", "不設定", !grain) : "";
+  return `<fieldset class="semantic-fieldset" data-semantic-grain="${prefix}"><legend>${optional ? "Native grain（選填）" : "Native grain"}</legend><div class="semantic-inline-fields"><label>Kind<select name="${prefix}-grain-kind" ${!catalog.length ? "disabled" : ""}>${none}${semanticOption("ENTITY", "ENTITY", entity)}${semanticOption("TIME", "TIME", grain?.kind === "TIME")}</select></label><label>Key<input name="${prefix}-grain-key" maxlength="120" value="${esc(grain?.key || "")}" ${optional ? "" : "required"} placeholder="order_item"></label><label>Physical columns<select name="${prefix}-grain-columns" multiple ${!catalog.length ? "disabled" : ""} ${optional ? "" : "required"}>${values}</select></label><label>Time unit<select name="${prefix}-grain-time-unit" ${!catalog.length ? "disabled" : ""}>${["day", "week", "month", "quarter", "year"].map((item) => semanticOption(item, item, grain?.timeUnit === item)).join("")}</select></label></div><small class="semantic-help">ENTITY 支援同一資料表中的多欄位鍵；TIME 使用一個時間欄位。</small></fieldset>`;
+}
+function semanticExpressionNode(expression, catalog, depth = 1) {
+  const value = expression || { kind: "COLUMN", source: {} };
+  const kind = value.kind || "COLUMN";
+  const kinds = ["COLUMN", "LITERAL", "ADD", "SUBTRACT", "MULTIPLY", "DIVIDE", "SUM", "COUNT", "COUNT_DISTINCT", "AVG", "MIN", "MAX"];
+  let body = "";
+  if (kind === "COLUMN" || kind === "COUNT_DISTINCT") body = `<label>Column${semanticSourceSelect("semantic-expression-source", catalog, semanticSourceValue(value.source), { required: true })}</label>`;
+  if (kind === "LITERAL") body = `<label>Numeric literal<input data-expression-literal type="number" step="any" value="${Number.isFinite(Number(value.value)) ? esc(value.value) : "0"}" required></label>`;
+  if (["ADD", "SUBTRACT", "MULTIPLY", "DIVIDE"].includes(kind)) body = `<div class="semantic-expression-children"><div data-expression-child="left">${semanticExpressionNode(value.left, catalog, depth + 1)}</div><div data-expression-child="right">${semanticExpressionNode(value.right, catalog, depth + 1)}</div></div>${kind === "DIVIDE" ? '<small class="semantic-help">Division by zero returns NULL.</small>' : ""}`;
+  if (["SUM", "AVG", "MIN", "MAX"].includes(kind)) body = `<div class="semantic-expression-children"><div data-expression-child="argument">${semanticExpressionNode(value.argument, catalog, depth + 1)}</div></div>`;
+  if (kind === "COUNT") body = `<label>Count mode<select data-expression-count-mode><option value="ROWS" ${value.mode === "ROWS" ? "selected" : ""}>ROWS</option><option value="COLUMN" ${value.mode === "COLUMN" ? "selected" : ""}>COLUMN</option></select></label>${value.mode === "COLUMN" ? `<label>Column${semanticSourceSelect("semantic-expression-source", catalog, semanticSourceValue(value.source), { required: true })}</label>` : ""}`;
+  return `<div class="semantic-expression" data-expression-node data-expression-depth="${depth}"><div class="semantic-expression-head"><span>Expression</span><select data-expression-kind ${depth >= 12 ? "disabled" : ""}>${kinds.map((item) => semanticOption(item, item, item === kind)).join("")}</select></div><div class="semantic-expression-body">${body}</div></div>`;
+}
+function semanticMetricSourceRow(source, catalog) {
+  return `<div class="semantic-repeat-row semantic-metric-source-row" data-semantic-metric-source><label>Source${semanticSourceSelect("semantic-metric-source", catalog, semanticSourceValue(source?.ref), { required: true })}</label><label>Role<select data-metric-source-role>${["value", "join", "filter", "time"].map((role) => semanticOption(role, role, source?.role === role)).join("")}</select></label><button class="icon-button danger" type="button" data-remove-semantic-row aria-label="移除來源">${icon("trash")}</button></div>`;
+}
+function semanticFilterRow(filter, catalog) {
+  const value = Array.isArray(filter?.value) ? filter.value.join(", ") : filter?.value ?? "";
+  return `<div class="semantic-repeat-row semantic-filter-row" data-semantic-filter><label>Field${semanticSourceSelect("semantic-filter-source", catalog, semanticSourceValue(filter?.field), { required: true })}</label><label>Operator<select data-semantic-filter-operator>${SEMANTIC_FILTER_OPERATORS.map((operator) => semanticOption(operator, operator, filter?.operator === operator)).join("")}</select></label><label>Value<input data-semantic-filter-value maxlength="240" value="${esc(value)}" placeholder="逗號分隔 IN 值"></label><button class="icon-button danger" type="button" data-remove-semantic-row aria-label="移除篩選">${icon("trash")}</button></div>`;
+}
+function semanticRelationshipKeyRow(key, catalog) {
+  return `<div class="semantic-repeat-row semantic-relationship-key" data-semantic-relationship-key><label>Left column${semanticSourceSelect("semantic-left-key", catalog, semanticSourceValue(key && { table: key.leftTable, column: key.leftColumn }), { required: true })}</label><label>Right column${semanticSourceSelect("semantic-right-key", catalog, semanticSourceValue(key && { table: key.rightTable, column: key.rightColumn }), { required: true })}</label><button class="icon-button danger" type="button" data-remove-semantic-row aria-label="移除 Join key">${icon("trash")}</button></div>`;
+}
+function semanticContractFields(type, contract, catalog) {
+  const common = `<label>Business definition<textarea name="semantic-definition" maxlength="2000" required>${esc(contract.definition || "")}</textarea></label>`;
+  const dependencies = `<fieldset class="semantic-fieldset"><legend>Pinned semantic dependencies</legend><p class="semantic-help">每個相依性必須明確 pin 至 Asset ID 與已核准的 Revision ID；不會自動解析 latest。</p><div data-semantic-dependencies>${semanticDependencyRows(contract.semanticDependencies || [])}</div><button type="button" class="button secondary compact" data-add-semantic-dependency>${icon("plus")}Add dependency</button></fieldset>`;
+  if (type === "TERM") return `${common}<fieldset class="semantic-fieldset"><legend>Source mapping</legend><label>Source column（選填）${semanticSourceSelect("semantic-term-source", catalog, semanticSourceValue(contract.source))}</label></fieldset>${dependencies}`;
+  if (type === "DIMENSION") return `${common}<fieldset class="semantic-fieldset"><legend>Dimension structure</legend><div class="semantic-inline-fields"><label>Source column${semanticSourceSelect("semantic-dimension-source", catalog, semanticSourceValue(contract.source), { required: true })}</label><label>Data type<input name="semantic-dimension-data-type" maxlength="80" value="${esc(contract.dataType || "TEXT")}" required></label></div><fieldset class="semantic-checkbox-group"><legend>Allowed operations</legend>${["GROUP", "FILTER", "ORDER"].map((operation) => `<label class="check"><input type="checkbox" name="semantic-dimension-operation" value="${operation}" ${(contract.allowedOperations || []).includes(operation) ? "checked" : ""}> ${operation}</label>`).join("")}</fieldset></fieldset>${semanticGrainFields("semantic-dimension", contract.nativeGrain, catalog, true)}${dependencies}`;
+  if (type === "METRIC") return `${common}<fieldset class="semantic-fieldset"><legend>Metric sources</legend><div data-semantic-metric-sources>${(contract.sources || []).map((source) => semanticMetricSourceRow(source, catalog)).join("")}</div><button type="button" class="button secondary compact" data-add-metric-source>${icon("plus")}Add source</button></fieldset><fieldset class="semantic-fieldset"><legend>Formula Builder</legend><p class="semantic-help">僅能建立受限結構式 AST；不支援 SQL 表達式。</p><div data-semantic-expression-root>${semanticExpressionNode(contract.expression, catalog)}</div></fieldset><fieldset class="semantic-fieldset"><legend>Default filters</legend><div data-semantic-filters>${(contract.defaultFilters || []).map((filter) => semanticFilterRow(filter, catalog)).join("")}</div><button type="button" class="button secondary compact" data-add-semantic-filter>${icon("plus")}Add filter</button></fieldset>${semanticGrainFields("semantic-metric", contract.nativeGrain, catalog)}<fieldset class="semantic-fieldset"><legend>Metric metadata</legend><div class="semantic-inline-fields"><label>Time dimension（選填）${semanticSourceSelect("semantic-metric-time-dimension", catalog, semanticSourceValue(contract.timeDimension))}</label><label>Unit<select name="semantic-metric-unit">${SEMANTIC_UNITS.map((unit) => semanticOption(unit, unit, contract.unit === unit)).join("")}</select></label><label>Currency<input name="semantic-metric-currency" maxlength="12" value="${esc(contract.currency || "")}" placeholder="TWD"></label></div></fieldset>${dependencies}`;
+  return `${common}<fieldset class="semantic-fieldset"><legend>Relationship structure</legend><div class="semantic-inline-fields"><label>Left table${semanticTableSelect("semantic-relationship-left-table", catalog, contract.leftTable)}</label><label>Right table${semanticTableSelect("semantic-relationship-right-table", catalog, contract.rightTable)}</label><label>Cardinality<select name="semantic-relationship-cardinality">${SEMANTIC_CARDINALITIES.map((value) => semanticOption(value, value, value === contract.cardinality)).join("")}</select></label></div><div data-semantic-relationship-keys>${(contract.joinKeys || []).map((key) => semanticRelationshipKeyRow(key, catalog)).join("")}</div><button type="button" class="button secondary compact" data-add-semantic-relationship-key>${icon("plus")}Add ordered join key</button></fieldset>${dependencies}`;
+}
+function semanticIdentityFields(mode, asset, contract) {
+  const editable = mode === "create" || mode === "suggestion";
+  if (!editable) return `<section class="semantic-form-summary"><span class="eyebrow">Asset identity is immutable here</span><h3>${esc(asset.displayName)}</h3><p><code>${esc(asset.canonicalName)}</code> · ${esc(asset.domain || "Unassigned domain")}</p></section>`;
+  const typeControl = mode === "suggestion" ? `<input type="hidden" name="semantic-asset-type" value="${esc(asset.assetType)}"><span class="semantic-fixed-value">${esc(asset.assetType)}</span>` : `<select name="semantic-asset-type" required>${SEMANTIC_TYPES.map((value) => semanticOption(value, value, value === asset.assetType)).join("")}</select>`;
+  return `<fieldset class="semantic-fieldset"><legend>Asset identity</legend><div class="semantic-inline-fields"><label>Semantic type${typeControl}</label><label>Canonical name<input name="semantic-canonical-name" pattern="[a-z][a-z0-9_]*" maxlength="120" value="${esc(contract.canonicalName || "")}" required placeholder="sales_revenue"></label><label>Display name<input name="semantic-display-name" maxlength="160" value="${esc(contract.displayName || "")}" required></label><label>Domain<input name="semantic-domain" maxlength="80" value="${esc(contract.domain || "")}"></label></div><label>Asset description<textarea name="semantic-asset-description" maxlength="2000">${esc(asset.description || "")}</textarea></label></fieldset>`;
+}
+function semanticFormMarkup(mode, asset, revision, catalog) {
+  const type = asset.assetType || "TERM";
+  const contract = revision?.contract || semanticDefaultContract(type, asset);
+  const title = mode === "create" ? "Create Semantic Asset" : mode === "suggestion" ? "Review AI suggestion as Draft" : mode === "edit" ? `Edit Draft v${revision.revisionNumber}` : `Create Draft v${Number(revision.revisionNumber) + 1}`;
+  const body = mode === "suggestion" ? "請檢閱並調整 AI 建議後，再明確建立 DRAFT。原始建議會保留且不會被改寫。" : mode === "create" ? "建立 Asset 與第一版 DRAFT。此操作不會改變查詢執行期。" : "目前已核准的定義保持不變；此草稿只在治理流程中存在。";
+  const action = mode === "edit" ? "Save Draft" : mode === "create" || mode === "suggestion" ? "Create Draft" : "Create Draft Revision";
+  return `<form class="modal-form semantic-form" data-semantic-form><span class="eyebrow">Design-time governance only</span><h2>${esc(title)}</h2><p>${body}</p>${semanticIdentityFields(mode, asset, contract)}<div data-semantic-contract-fields>${semanticContractFields(type, contract, catalog)}</div><fieldset class="semantic-fieldset"><legend>Aliases</legend><div data-semantic-aliases>${semanticAliasRows(revision?.aliases || [])}</div><button type="button" class="button secondary compact" data-add-semantic-alias>${icon("plus")}Add alias</button></fieldset><label>Change reason（選填）<textarea name="semantic-change-reason" maxlength="1000">${esc(revision?.changeReason || "")}</textarea></label><p class="semantic-form-error" data-semantic-form-error role="alert" hidden></p><button class="button primary" type="submit">${icon("check")}${action}</button></form>`;
+}
+function appendSemanticRow(container, html) { container.insertAdjacentHTML("beforeend", html); }
+function bindSemanticComposer(dialog, context, catalog) {
+  const form = dialog.querySelector("[data-semantic-form]");
+  if (!form) return;
+  const setDirty = () => { form.dataset.dirty = "true"; };
+  form.addEventListener("input", setDirty);
+  form.addEventListener("change", setDirty);
+  const contractFields = form.querySelector("[data-semantic-contract-fields]");
+  form.querySelector('[name="semantic-asset-type"]')?.addEventListener("change", (event) => {
+    const type = event.target.value;
+    contractFields.innerHTML = semanticContractFields(type, semanticDefaultContract(type, { canonicalName: form.elements["semantic-canonical-name"]?.value || "", displayName: form.elements["semantic-display-name"]?.value || "", domain: form.elements["semantic-domain"]?.value || "" }), catalog);
+    bindSemanticComposerDynamic(form, catalog);
+  });
+  bindSemanticComposerDynamic(form, catalog);
+  dialog.querySelector(".modal-close").onclick = () => { if (!form.dataset.dirty || confirm("尚有未儲存的語意草稿，確定離開嗎？")) dialog.close(); };
+  form.addEventListener("submit", (event) => { event.preventDefault(); void submitSemanticForm(dialog, form, context); });
+}
+function bindSemanticComposerDynamic(form, catalog) {
+  form.querySelectorAll("[data-remove-semantic-row]").forEach((button) => { button.onclick = () => { button.closest(".semantic-repeat-row")?.remove(); }; });
+  const addRow = (selector, row) => {
+    const button = form.querySelector(selector);
+    if (!button) return;
+    button.onclick = () => { appendSemanticRow(form.querySelector(row.container), row.markup()); bindSemanticComposerDynamic(form, catalog); };
+  };
+  addRow("[data-add-semantic-alias]", { container: "[data-semantic-aliases]", markup: () => semanticAliasRows([{ alias: "", locale: "" }]) });
+  addRow("[data-add-semantic-dependency]", { container: "[data-semantic-dependencies]", markup: () => semanticDependencyRows([{ referencedAssetId: "", referencedRevisionId: "" }]) });
+  addRow("[data-add-metric-source]", { container: "[data-semantic-metric-sources]", markup: () => semanticMetricSourceRow({}, catalog) });
+  addRow("[data-add-semantic-filter]", { container: "[data-semantic-filters]", markup: () => semanticFilterRow({}, catalog) });
+  addRow("[data-add-semantic-relationship-key]", { container: "[data-semantic-relationship-keys]", markup: () => semanticRelationshipKeyRow({}, catalog) });
+  form.querySelectorAll("[data-expression-kind], [data-expression-count-mode]").forEach((select) => {
+    select.onchange = () => {
+      const node = select.closest("[data-expression-node]");
+      const kind = node.querySelector("[data-expression-kind]")?.value || "COLUMN";
+      const countMode = node.querySelector("[data-expression-count-mode]")?.value;
+      const next = { kind, ...(kind === "COUNT" ? { mode: countMode || "ROWS" } : {}) };
+      node.outerHTML = semanticExpressionNode(next, catalog, Number(node.dataset.expressionDepth || 1));
+      bindSemanticComposerDynamic(form, catalog);
+    };
+  });
+}
+function readSemanticAliases(form) {
+  return [...form.querySelectorAll("[data-semantic-alias]")].map((row) => ({ alias: row.querySelector('[name="semantic-alias"]')?.value.trim() || "", locale: row.querySelector('[name="semantic-alias-locale"]')?.value.trim() || undefined }));
+}
+function readSemanticDependencies(form) {
+  return [...form.querySelectorAll("[data-semantic-dependency]")].map((row) => ({ referencedAssetId: row.querySelector('[name="semantic-dependency-asset"]')?.value.trim() || "", referencedRevisionId: row.querySelector('[name="semantic-dependency-revision"]')?.value.trim() || "" }));
+}
+function readSemanticGrain(form, prefix, required) {
+  const kind = form.elements[`${prefix}-grain-kind`]?.value || "";
+  if (!kind) { if (required) throw new Error("必須設定 Native grain。"); return undefined; }
+  const key = form.elements[`${prefix}-grain-key`]?.value.trim();
+  const selected = [...form.querySelector(`[name="${prefix}-grain-columns"]`)?.selectedOptions || []].map((option) => semanticSourceFromValue(option.value, "Grain anchor"));
+  if (!key || !selected.length) throw new Error("Native grain 必須包含 key 與實體 Schema 欄位。");
+  if (kind === "TIME") return { kind, key, source: selected[0], timeUnit: form.elements[`${prefix}-grain-time-unit`]?.value || "day" };
+  const table = selected[0].table;
+  if (selected.some((source) => source.table !== table)) throw new Error("ENTITY grain 的欄位必須來自同一資料表。");
+  return { kind: "ENTITY", key, source: { table, keyColumns: selected.map((source) => source.column) } };
+}
+function readSemanticExpression(node) {
+  const kind = node.querySelector(":scope > .semantic-expression-head [data-expression-kind]")?.value;
+  const source = () => semanticSourceFromValue(node.querySelector("[data-semantic-source]")?.value, "Formula column");
+  if (kind === "COLUMN") return { kind, source: source() };
+  if (kind === "LITERAL") { const value = Number(node.querySelector("[data-expression-literal]")?.value); if (!Number.isFinite(value)) throw new Error("Formula literal 必須為數字。"); return { kind, value }; }
+  if (kind === "COUNT_DISTINCT") return { kind, source: source() };
+  if (kind === "COUNT") { const mode = node.querySelector("[data-expression-count-mode]")?.value || "ROWS"; return mode === "ROWS" ? { kind, mode } : { kind, mode, source: source() }; }
+  const child = (name) => node.querySelector(`:scope > .semantic-expression-body > .semantic-expression-children > [data-expression-child="${name}"] > [data-expression-node]`);
+  if (["ADD", "SUBTRACT", "MULTIPLY", "DIVIDE"].includes(kind)) { const result = { kind, left: readSemanticExpression(child("left")), right: readSemanticExpression(child("right")) }; return kind === "DIVIDE" ? { ...result, divisionByZero: "NULL" } : result; }
+  if (["SUM", "AVG", "MIN", "MAX"].includes(kind)) return { kind, argument: readSemanticExpression(child("argument")) };
+  throw new Error("Formula operator is invalid.");
+}
+function readSemanticContract(form, context) {
+  const editableIdentity = context.mode === "create" || context.mode === "suggestion";
+  const type = editableIdentity ? form.elements["semantic-asset-type"]?.value : context.asset.assetType;
+  const canonicalName = editableIdentity ? form.elements["semantic-canonical-name"]?.value.trim() : context.asset.canonicalName;
+  const displayName = editableIdentity ? form.elements["semantic-display-name"]?.value.trim() : context.asset.displayName;
+  const domain = editableIdentity ? form.elements["semantic-domain"]?.value.trim() : context.latest.contract.domain;
+  const common = { canonicalName, displayName, definition: form.elements["semantic-definition"]?.value.trim() || "", domain, semanticDependencies: readSemanticDependencies(form) };
+  if (type === "TERM") { const raw = form.elements["semantic-term-source"]?.value; return { ...common, ...(raw ? { source: semanticSourceFromValue(raw) } : {}) }; }
+  if (type === "DIMENSION") {
+    const nativeGrain = readSemanticGrain(form, "semantic-dimension", false);
+    return { ...common, source: semanticSourceFromValue(form.elements["semantic-dimension-source"]?.value), dataType: form.elements["semantic-dimension-data-type"]?.value.trim() || "TEXT", allowedOperations: [...form.querySelectorAll('[name="semantic-dimension-operation"]:checked')].map((input) => input.value), ...(nativeGrain ? { nativeGrain } : {}) };
+  }
+  if (type === "METRIC") {
+    const sources = [...form.querySelectorAll("[data-semantic-metric-source]")].map((row) => ({ ref: semanticSourceFromValue(row.querySelector("[data-semantic-source]")?.value), role: row.querySelector("[data-metric-source-role]")?.value }));
+    const defaultFilters = [...form.querySelectorAll("[data-semantic-filter]")].map((row) => { const operator = row.querySelector("[data-semantic-filter-operator]")?.value; const raw = row.querySelector("[data-semantic-filter-value]")?.value.trim() || ""; const filter = { field: semanticSourceFromValue(row.querySelector("[data-semantic-source]")?.value), operator }; if (operator !== "IS_NULL" && operator !== "IS_NOT_NULL") filter.value = operator === "IN" || operator === "NOT_IN" ? raw.split(",").map((item) => item.trim()).filter(Boolean) : raw; return filter; });
+    const unit = form.elements["semantic-metric-unit"]?.value;
+    const currency = form.elements["semantic-metric-currency"]?.value.trim();
+    const timeRaw = form.elements["semantic-metric-time-dimension"]?.value;
+    return { ...common, sources, expression: readSemanticExpression(form.querySelector("[data-semantic-expression-root] > [data-expression-node]")), defaultFilters, nativeGrain: readSemanticGrain(form, "semantic-metric", true), ...(timeRaw ? { timeDimension: semanticSourceFromValue(timeRaw) } : {}), unit, ...(unit === "CURRENCY" ? { currency } : {}) };
+  }
+  const joinKeys = [...form.querySelectorAll("[data-semantic-relationship-key]")].map((row) => { const left = semanticSourceFromValue(row.querySelector('[name="semantic-left-key"]')?.value); const right = semanticSourceFromValue(row.querySelector('[name="semantic-right-key"]')?.value); return { leftTable: left.table, leftColumn: left.column, rightTable: right.table, rightColumn: right.column }; });
+  return { ...common, leftTable: form.elements["semantic-relationship-left-table"]?.value, rightTable: form.elements["semantic-relationship-right-table"]?.value, cardinality: form.elements["semantic-relationship-cardinality"]?.value, joinKeys };
+}
+async function openSemanticForm(mode, assetId = null, suggestion = null) {
+  try {
+    const catalogPromise = semanticCatalog();
+    const detail = assetId ? await api(`/api/v1/semantics/${encodeURIComponent(assetId)}`) : null;
+    const catalog = await catalogPromise;
+    const suggestionAsset = suggestion ? { assetType: suggestion.suggestionType, canonicalName: suggestion.canonicalName, displayName: suggestion.displayName, domain: suggestion.suggestion?.contract?.domain || "", description: "" } : null;
+    const suggestionLatest = suggestion ? { revisionNumber: 0, contract: suggestion.suggestion.contract, aliases: suggestion.suggestion.aliases || [], changeReason: "AI suggestion reviewed by a human." } : null;
+    const asset = detail?.asset || suggestionAsset || { assetType: "TERM", canonicalName: "", displayName: "", domain: "", description: "" };
+    const latest = detail ? { ...detail.latestRevision, aliases: detail.aliases || [] } : suggestionLatest;
+    const dialog = modal(semanticFormMarkup(mode, asset, latest, catalog));
+    bindSemanticComposer(dialog, { mode, asset, latest, suggestionId: suggestion?.suggestionId || null }, catalog);
+  } catch (error) { toast(semanticError(error), "error"); }
+}
+async function submitSemanticForm(dialog, form, context) {
+  if (state.semanticMutationPending) return;
+  const errorBox = form.querySelector("[data-semantic-form-error]");
+  try {
+    state.semanticMutationPending = true;
+    form.querySelector('[type="submit"]').disabled = true;
+    const contract = readSemanticContract(form, context);
+    const aliases = readSemanticAliases(form);
+    const changeReason = form.elements["semantic-change-reason"]?.value.trim() || "";
+    let response;
+    if (context.mode === "create") response = await api("/api/v1/semantics", { method: "POST", body: JSON.stringify({ assetType: context.mode === "create" ? form.elements["semantic-asset-type"].value : context.asset.assetType, canonicalName: contract.canonicalName, displayName: contract.displayName, domain: contract.domain, description: form.elements["semantic-asset-description"]?.value.trim() || "", contract, aliases, changeReason }) });
+    else if (context.mode === "suggestion") response = await api(`/api/v1/semantics/suggestions/${encodeURIComponent(context.suggestionId)}/accept-as-draft`, { method: "POST", body: JSON.stringify({ canonicalName: contract.canonicalName, displayName: contract.displayName, domain: contract.domain, description: form.elements["semantic-asset-description"]?.value.trim() || "", contract, aliases, changeReason }) });
+    else if (context.mode === "edit") response = await api(`/api/v1/semantics/${encodeURIComponent(context.asset.assetId)}/revisions/${encodeURIComponent(context.latest.revisionId)}`, { method: "PATCH", body: JSON.stringify({ contract, aliases, changeReason }) });
+    else response = await api(`/api/v1/semantics/${encodeURIComponent(context.asset.assetId)}/revisions`, { method: "POST", body: JSON.stringify({ contract, aliases, changeReason }) });
+    invalidateSemantics();
+    state.semanticAssetId = response.assetId;
+    state.semanticDetailTab = "overview";
+    dialog.close();
+    toast(context.mode === "edit" ? "Draft 已儲存" : context.mode === "suggestion" ? "AI 建議已建立為待治理的 Draft" : context.mode === "create" ? "Semantic Asset Draft 已建立" : "新的 Draft Revision 已建立");
+    void render();
+  } catch (error) {
+    errorBox.textContent = error instanceof Error && !error.code ? error.message : semanticError(error);
+    errorBox.hidden = false;
+    form.querySelector('[type="submit"]').disabled = false;
+  } finally { state.semanticMutationPending = false; }
+}
+function semanticReviewDialog(action, assetId, revisionId) {
+  const isReject = action === "reject";
+  const dialog = modal(`<form class="modal-form semantic-review-form"><span class="eyebrow">Reviewer action</span><h2>${isReject ? "Reject Revision" : "Request Changes"}</h2><p>${isReject ? "Rejecting ends this revision's review lifecycle. The asset and all history remain preserved." : "This revision will return to DRAFT for its manager to update."}</p><label>Review comment<textarea name="comment" maxlength="2000" required></textarea></label><p class="semantic-form-error" role="alert" hidden></p><button class="button ${isReject ? "danger-outline" : "primary"}" type="submit">${isReject ? "Reject Revision" : "Request Changes"}</button></form>`);
+  const form = dialog.querySelector("form");
+  form.onsubmit = async (event) => {
+    event.preventDefault();
+    const button = form.querySelector('[type="submit"]');
+    const errorBox = form.querySelector(".semantic-form-error");
+    try {
+      button.disabled = true;
+      await api(`/api/v1/semantics/${encodeURIComponent(assetId)}/revisions/${encodeURIComponent(revisionId)}/${action}`, { method: "POST", body: JSON.stringify({ comment: new FormData(form).get("comment") }) });
+      invalidateSemantics(); dialog.close(); toast(isReject ? "Revision 已駁回" : "Revision 已退回草稿"); void render();
+    } catch (error) { errorBox.textContent = semanticError(error); errorBox.hidden = false; button.disabled = false; }
+  };
+}
+async function submitSemanticForReview(assetId, revisionId) {
+  if (!confirm("確定送交審查？送出後 Draft 將不可編輯，直到審查者要求修改。")) return;
+  try { await api(`/api/v1/semantics/${encodeURIComponent(assetId)}/revisions/${encodeURIComponent(revisionId)}/submit-review`, { method: "POST" }); invalidateSemantics(); toast("Revision 已送交審查"); void render(); } catch (error) { toast(semanticError(error), "error"); }
+}
+
+async function openSemanticSuggestionGenerator() {
+  try {
+    const catalog = await semanticSuggestionCatalog();
+    if (!catalog.length) { toast("目前沒有可選的已授權 Schema 資料表。", "error"); return; }
+    const tableOptions = catalog.slice(0, 8).map((item) => `<label class="check"><input type="checkbox" name="tableName" value="${esc(item.table)}"> ${esc(item.table)} <small>(${item.columns.length} columns)</small></label>`).join("");
+    const dialog = modal(`<form class="modal-form semantic-suggestion-generator"><span class="eyebrow">Governed design-time AI</span><h2>Generate AI Schema Suggestions</h2><p>選擇少量已授權資料表。AI 只會讀取結構化 metadata；不會讀取資料列、聊天內容或權限規則。</p><fieldset class="semantic-fieldset"><legend>Authorized tables（最多 8 個）</legend><div class="suggestion-table-options">${tableOptions}</div></fieldset><fieldset class="semantic-fieldset"><legend>Suggestion types</legend><div class="semantic-checkbox-group">${SEMANTIC_TYPES.map((type) => `<label class="check"><input type="checkbox" name="suggestionType" value="${type}" ${["DIMENSION", "METRIC", "RELATIONSHIP"].includes(type) ? "checked" : ""}> ${type}</label>`).join("")}</div></fieldset><label>Maximum suggestions<select name="maxSuggestions">${[4, 6, 8, 12].map((value) => semanticOption(value, String(value), value === 8)).join("")}</select></label><p class="semantic-form-error" role="alert" hidden></p><button class="button primary" type="submit">${icon("plus")}Generate suggestions</button></form>`);
+    const form = dialog.querySelector("form");
+    form.onsubmit = async (event) => {
+      event.preventDefault();
+      const submit = form.querySelector('[type="submit"]');
+      const errorBox = form.querySelector(".semantic-form-error");
+      const data = new FormData(form);
+      const tableNames = data.getAll("tableName").map(String);
+      const suggestionTypes = data.getAll("suggestionType").map(String);
+      if (!tableNames.length || !suggestionTypes.length) { errorBox.textContent = "請至少選擇一個資料表與一種建議類型。"; errorBox.hidden = false; return; }
+      try {
+        submit.disabled = true;
+        const response = await api("/api/v1/semantics/suggestions/generate", { method: "POST", body: JSON.stringify({ tableNames, suggestionTypes, maxSuggestions: Number(data.get("maxSuggestions")) }) });
+        invalidateSemantics();
+        state.semanticWorkspace = "suggestions";
+        dialog.close();
+        toast(`已建立 ${response.suggestionCount} 個待檢閱 AI 建議`);
+        void render();
+      } catch (error) { errorBox.textContent = semanticError(error); errorBox.hidden = false; submit.disabled = false; }
+    };
+  } catch (error) { toast(semanticError(error), "error"); }
+}
+
+async function useSemanticSuggestion(suggestionId) {
+  try {
+    const item = await api(`/api/v1/semantics/suggestions/${encodeURIComponent(suggestionId)}`);
+    if (item.isStale || item.status !== "OPEN") { toast("這項建議已不可建立草稿，請重新整理。", "error"); return; }
+    await openSemanticForm("suggestion", null, item);
+  } catch (error) { toast(semanticError(error), "error"); }
+}
+
+async function dismissSemanticSuggestion(suggestionId) {
+  if (!confirm("確定要忽略這項 AI 建議？此操作不會影響任何正式語意定義。")) return;
+  try {
+    await api(`/api/v1/semantics/suggestions/${encodeURIComponent(suggestionId)}/dismiss`, { method: "POST", body: JSON.stringify({}) });
+    invalidateSemantics();
+    toast("AI 建議已忽略");
+    void render();
+  } catch (error) { toast(semanticError(error), "error"); }
+}
+
+function installSemanticNavigation() {
+  if (!pageAllowed("semantics") || root.querySelector('[data-page="semantics"]')) return;
+  const navigation = root.querySelector(".sidebar nav");
+  if (!navigation) return;
+  const section = document.createElement("div");
+  section.className = "nav-section";
+  section.textContent = "語意治理";
+  const item = document.createElement("button");
+  item.className = `nav-item ${state.page === "semantics" ? "active" : ""}`;
+  item.dataset.page = "semantics";
+  item.dataset.semanticNav = "true";
+  item.setAttribute("aria-current", state.page === "semantics" ? "page" : "false");
+  item.innerHTML = `${icon("layers")}<span>Semantic Registry</span>`;
+  item.addEventListener("click", () => { state.semanticAssetId = null; state.semanticDetailTab = "overview"; go("semantics"); });
+  navigation.append(section, item);
+}
+
+const VIEWS = { dashboard: renderDashboard, chat: renderChat, schema: renderSchema, dictionary: renderDictionary, templates: renderTemplates, insights: renderInsights, usage: renderUsage, source: renderSource, semantics: renderSemantics, "admin-overview": renderAdminOverview, "admin-users": renderAdminUsers, "admin-roles": renderAdminRoles, "admin-invitations": renderAdminInvitations, "admin-audit": renderAdminAudit, "admin-system": renderAdminSystem, profile: async () => renderProfile() };
 async function render() { const current = ++state.renderId; root.innerHTML = '<div class="loading"><span></span>正在載入 QueryMind…</div>'; try { if (!pageAllowed(state.page)) state.page = "dashboard"; const markup = await (VIEWS[state.page] || VIEWS.dashboard)(); if (current !== state.renderId) return; root.innerHTML = markup; bindShell(); bindPage(); } catch (error) { if (current !== state.renderId || error.authExpired) return; root.innerHTML = shell(empty("載入資料時發生問題", error.message, button("重新嘗試", { kind: "primary", attrs: 'data-action="retry"' }))); bindShell(); root.querySelector('[data-action="retry"]')?.addEventListener("click", () => { state.cache.clear(); void render(); }); } }
-function bindShell() { root.querySelectorAll("[data-page]").forEach((element) => element.addEventListener("click", () => go(element.dataset.page))); root.querySelectorAll('[data-action="open-sidebar"]').forEach((element) => element.addEventListener("click", () => { state.sidebarOpen = true; void render(); })); root.querySelectorAll('[data-action="close-sidebar"]').forEach((element) => element.addEventListener("click", () => { state.sidebarOpen = false; void render(); })); }
-function bindPage() {
+function bindShell() { installSemanticNavigation(); root.querySelectorAll("[data-page]:not([data-semantic-nav])").forEach((element) => element.addEventListener("click", () => go(element.dataset.page))); root.querySelectorAll('[data-action="open-sidebar"]').forEach((element) => element.addEventListener("click", () => { state.sidebarOpen = true; void render(); })); root.querySelectorAll('[data-action="close-sidebar"]').forEach((element) => element.addEventListener("click", () => { state.sidebarOpen = false; void render(); })); }
+function bindSemanticPage() {
+  root.querySelectorAll("[data-semantic-workspace]").forEach((button) => button.addEventListener("click", () => { state.semanticWorkspace = button.dataset.semanticWorkspace; state.semanticAssetId = null; void render(); }));
+  root.querySelector("[data-semantic-filters]")?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const values = new FormData(event.currentTarget);
+    state.semanticFilters = { ...state.semanticFilters, search: String(values.get("search") || "").trim(), type: String(values.get("type") || ""), assetStatus: String(values.get("assetStatus") || ""), revisionStatus: String(values.get("revisionStatus") || ""), domain: String(values.get("domain") || "").trim(), page: 1 };
+    void render();
+  });
+  root.querySelector("[data-suggestion-filters]")?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const values = new FormData(event.currentTarget);
+    state.semanticSuggestionFilters = { ...state.semanticSuggestionFilters, status: String(values.get("status") || ""), type: String(values.get("type") || ""), stale: String(values.get("stale") || ""), page: 1 };
+    void render();
+  });
+  root.querySelectorAll("[data-semantic-page]").forEach((button) => button.addEventListener("click", () => { state.semanticFilters.page = Number(button.dataset.semanticPage) || 1; void render(); }));
+  root.querySelectorAll("[data-open-semantic]").forEach((button) => button.addEventListener("click", () => { state.semanticAssetId = button.dataset.openSemantic; state.semanticDetailTab = "overview"; void render(); }));
+  root.querySelector("[data-semantic-back]")?.addEventListener("click", () => { state.semanticAssetId = null; state.semanticDetailTab = "overview"; void render(); });
+  root.querySelectorAll("[data-semantic-tab]").forEach((button) => button.addEventListener("click", () => { state.semanticDetailTab = button.dataset.semanticTab; void render(); }));
+  root.querySelector("[data-action=\"create-semantic\"]")?.addEventListener("click", () => void openSemanticForm("create"));
+  root.querySelector('[data-action="generate-semantic-suggestions"]')?.addEventListener("click", () => void openSemanticSuggestionGenerator());
+  root.querySelectorAll("[data-use-suggestion]").forEach((button) => button.addEventListener("click", () => void useSemanticSuggestion(button.dataset.useSuggestion)));
+  root.querySelectorAll("[data-dismiss-suggestion]").forEach((button) => button.addEventListener("click", () => void dismissSemanticSuggestion(button.dataset.dismissSuggestion)));
+  root.querySelector("[data-edit-semantic]")?.addEventListener("click", () => void openSemanticForm("edit", root.querySelector("[data-edit-semantic]").dataset.editSemantic));
+  root.querySelector("[data-new-semantic-revision]")?.addEventListener("click", () => void openSemanticForm("revision", root.querySelector("[data-new-semantic-revision]").dataset.newSemanticRevision));
+  root.querySelector("[data-submit-semantic]")?.addEventListener("click", () => { const button = root.querySelector("[data-submit-semantic]"); void submitSemanticForReview(button.dataset.submitSemantic, button.dataset.revisionId); });
+  root.querySelectorAll("[data-review-semantic]").forEach((button) => button.addEventListener("click", () => semanticReviewDialog(button.dataset.reviewSemantic, button.dataset.assetId, button.dataset.revisionId)));
+}
+function bindPage() { bindSemanticPage();
   root.querySelectorAll("[data-prompt]").forEach((button) => button.addEventListener("click", () => go("chat", { pendingPrompt: button.dataset.prompt, resetSession: true })));
   root.querySelectorAll("[data-session]").forEach((button) => button.addEventListener("click", () => { state.activeSession = button.dataset.session; state.messages = []; state.result = null; void render(); }));
   root.querySelectorAll("[data-session-action]").forEach((button) => button.addEventListener("click", (event) => { event.stopPropagation(); void sessionAction(button.dataset.sessionAction, button.dataset.sessionId, button.dataset.sessionValue); }));

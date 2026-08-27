@@ -19,6 +19,9 @@ export const PRODUCT_CAPABILITIES = [
   "manage_dictionary",
   "refresh_schema",
   "manage_users",
+  "view_semantics",
+  "manage_semantic_drafts",
+  "review_semantics",
 ] as const;
 export const MAX_SAFE_RESULT_ROWS = 10_000;
 

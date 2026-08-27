@@ -24,6 +24,95 @@ test.describe("P1 explainability contract", () => {
     const envelope = buildQueryExplainability({ prompt: null, sql: "SELECT id FROM orders", scope, referencedTables: ["orders"], rowCount: 1, truncated: false, maskedColumns: [], queryRunId: "22222222-2222-4222-8222-222222222222", rawSqlAvailable: true });
     expect(envelope.explanation).toMatchObject({ rawSqlAvailable: true, sql: "SELECT id FROM orders" });
   });
+
+  test("derives dimensions only from validated GROUP BY expressions", () => {
+    const envelope = buildQueryExplainability({
+      prompt: "請依商品列出銷售額",
+      sql: "SELECT p.name AS product_name, SUM(oi.subtotal) AS sales_revenue FROM products p JOIN order_items oi ON oi.product_id = p.id WHERE oi.status = 'active' GROUP BY p.id, p.name ORDER BY sales_revenue DESC",
+      scope,
+      referencedTables: ["products", "order_items"],
+      rowCount: 2,
+      truncated: false,
+      maskedColumns: [],
+      queryRunId: "44444444-4444-4444-8444-444444444444",
+      rawSqlAvailable: true,
+    });
+    expect(envelope.understanding.metrics).toEqual(["sales amount"]);
+    expect(envelope.understanding.dimensions).toEqual(["product"]);
+    expect(envelope.understanding.dimensions).not.toContain("grouped dimensions");
+    expect(envelope.understanding.dimensions).not.toContain("status");
+    expect(envelope.understanding.filters).toEqual([]);
+    expect(envelope.explanation.sql).toContain("SELECT p.name");
+  });
+
+  test("keeps qualified dimensions after unaliased JOIN relations", () => {
+    const envelope = buildQueryExplainability({
+      prompt: "請列出銷售額最高的 5 個商品",
+      sql: "SELECT products.name, SUM(order_items.subtotal) AS total_revenue FROM order_items JOIN products ON products.id = order_items.product_id JOIN orders ON orders.id = order_items.order_id WHERE orders.status = 'completed' GROUP BY products.name ORDER BY total_revenue DESC LIMIT 5",
+      scope,
+      referencedTables: ["order_items", "products", "orders"],
+      rowCount: 5,
+      truncated: false,
+      maskedColumns: [],
+      queryRunId: "77777777-7777-4777-8777-777777777777",
+      rawSqlAvailable: true,
+    });
+    expect(envelope.understanding.metrics).toEqual(["sales amount"]);
+    expect(envelope.understanding.dimensions).toEqual(["product"]);
+  });
+
+  test("derives multiple qualified dimensions without inventing one when GROUP BY is absent", () => {
+    const grouped = buildQueryExplainability({
+      prompt: "依商品與地區彙整銷售額",
+      sql: "SELECT products.name, orders.region, SUM(order_items.subtotal) AS total_revenue FROM order_items JOIN products ON products.id = order_items.product_id JOIN orders ON orders.id = order_items.order_id GROUP BY products.name, orders.region",
+      scope,
+      referencedTables: ["order_items", "products", "orders"],
+      rowCount: 5,
+      truncated: false,
+      maskedColumns: [],
+      queryRunId: "88888888-8888-4888-8888-888888888888",
+      rawSqlAvailable: true,
+    });
+    const aggregateOnly = buildQueryExplainability({
+      prompt: "總銷售額",
+      sql: "SELECT SUM(order_items.subtotal) AS total_revenue FROM order_items JOIN orders ON orders.id = order_items.order_id",
+      scope,
+      referencedTables: ["order_items", "orders"],
+      rowCount: 1,
+      truncated: false,
+      maskedColumns: [],
+      queryRunId: "99999999-9999-4999-8999-999999999999",
+      rawSqlAvailable: true,
+    });
+    expect(grouped.understanding.dimensions).toEqual(["product", "location"]);
+    expect(aggregateOnly.understanding.dimensions).toEqual([]);
+  });
+
+  test("does not turn WHERE-only business columns into dimensions or generic filters", () => {
+    const envelope = buildQueryExplainability({
+      prompt: "請列出處理中的客服案件",
+      sql: "SELECT id, status FROM support_tickets WHERE status = 'in_progress'",
+      scope,
+      referencedTables: ["support_tickets"],
+      rowCount: 1,
+      truncated: false,
+      maskedColumns: [],
+      queryRunId: "55555555-5555-4555-8555-555555555555",
+      rawSqlAvailable: false,
+    });
+    expect(envelope.understanding.dimensions).toEqual([]);
+    expect(envelope.understanding.filters).toEqual(["處理中的案件"]);
+    expect(envelope.understanding.filters).not.toContain("query filters applied");
+    expect(envelope.explanation).not.toHaveProperty("sql");
+  });
+
+  test("omits an empty raw SQL section and keeps governance facts separate", () => {
+    const envelope = buildQueryExplainability({ prompt: "查詢資料", sql: "   ", scope, referencedTables: ["orders"], rowCount: 0, truncated: false, maskedColumns: [], queryRunId: "66666666-6666-4666-8666-666666666666", rawSqlAvailable: true });
+    expect(envelope.explanation.rawSqlAvailable).toBe(false);
+    expect(envelope.explanation).not.toHaveProperty("sql");
+    expect(envelope.explanation.business).not.toContain("scope:tw");
+    expect(envelope.explanation.business).not.toContain("shipping_city = 'Taipei'");
+  });
 });
 
 function feedbackEnv(runUserId = "local-anonymous") {

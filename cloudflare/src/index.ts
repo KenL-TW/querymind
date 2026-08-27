@@ -12,6 +12,8 @@ import { addMessage, createSession, deleteSession, listMessages, listSessions, s
 import { currentUsage, publicConfiguration } from "./routes/system";
 import { submitQueryFeedback } from "./routes/feedback";
 import { acceptInvitation, invitationPreview } from "./routes/invitations";
+import { createSemantic, createSemanticRevisionApi, getSemantic, listSemanticReviews, listSemanticRevisions, listSemantics, patchSemanticRevision, rejectSemanticApi, requestSemanticChangesApi, submitSemanticReview } from "./routes/semantics";
+import { acceptSemanticSuggestionAsDraftApi, dismissSemanticSuggestion, generateSemanticSuggestions, getSemanticSuggestion, listSemanticSuggestions, semanticSuggestionCatalog } from "./routes/semantic-suggestions";
 import { adminOverview, auditLog, connectionInfo, createApiKey, createInsight, createInvitation, createTemplate, dashboard, deleteDictionary, deleteInsight, deleteTemplate, exportCsv, listApiKeys, listDictionary, listInsights, listInvitations, listRoles, listTemplates, listUsers, resetUserPassword, revokeApiKey, revokeInvitation, saveDictionary, systemInfo, updateInsight, updateRole, updateTemplate, updateUser } from "./routes/modules";
 
 type HealthDatabase = "ok" | "unavailable";
@@ -100,6 +102,11 @@ async function route(request: Request, env: Env): Promise<Response> {
   if (request.method === "POST" && url.pathname === "/api/v1/sessions") return createSession(request, env);
   if (request.method === "GET" && url.pathname === "/api/v1/schema") return getSchema(request, env);
   if (request.method === "POST" && url.pathname === "/api/v1/schema/refresh") return refreshSchema(request, env);
+  if (request.method === "GET" && url.pathname === "/api/v1/semantics") return listSemantics(request, env);
+  if (request.method === "POST" && url.pathname === "/api/v1/semantics") return createSemantic(request, env);
+  if (request.method === "POST" && url.pathname === "/api/v1/semantics/suggestions/generate") return generateSemanticSuggestions(request, env);
+  if (request.method === "GET" && url.pathname === "/api/v1/semantics/suggestions/catalog") return semanticSuggestionCatalog(request, env);
+  if (request.method === "GET" && url.pathname === "/api/v1/semantics/suggestions") return listSemanticSuggestions(request, env);
   if (request.method === "POST" && url.pathname === "/api/v1/chat") return chat(request, env);
 
   const session = sessionPath(url.pathname);
@@ -118,6 +125,28 @@ async function route(request: Request, env: Env): Promise<Response> {
   const dictionary = url.pathname.match(/^\/api\/v1\/dictionary\/([0-9a-f-]{36})$/iu);
   if (dictionary && request.method === "PUT") return saveDictionary(request, env, dictionary[1]);
   if (dictionary && request.method === "DELETE") return deleteDictionary(request, env, dictionary[1]);
+  const semanticReviews = url.pathname.match(/^\/api\/v1\/semantics\/([A-Za-z0-9_-]{1,128})\/revisions\/([A-Za-z0-9_-]{1,128})\/reviews$/u);
+  if (semanticReviews && request.method === "GET") return listSemanticReviews(request, env, semanticReviews[1], semanticReviews[2]);
+  const semanticRevisionAction = url.pathname.match(/^\/api\/v1\/semantics\/([A-Za-z0-9_-]{1,128})\/revisions\/([A-Za-z0-9_-]{1,128})\/(submit-review|request-changes|reject)$/u);
+  if (semanticRevisionAction && request.method === "POST") {
+    if (semanticRevisionAction[3] === "submit-review") return submitSemanticReview(request, env, semanticRevisionAction[1], semanticRevisionAction[2]);
+    if (semanticRevisionAction[3] === "request-changes") return requestSemanticChangesApi(request, env, semanticRevisionAction[1], semanticRevisionAction[2]);
+    return rejectSemanticApi(request, env, semanticRevisionAction[1], semanticRevisionAction[2]);
+  }
+  const semanticRevision = url.pathname.match(/^\/api\/v1\/semantics\/([A-Za-z0-9_-]{1,128})\/revisions\/([A-Za-z0-9_-]{1,128})$/u);
+  if (semanticRevision && request.method === "PATCH") return patchSemanticRevision(request, env, semanticRevision[1], semanticRevision[2]);
+  const semanticRevisions = url.pathname.match(/^\/api\/v1\/semantics\/([A-Za-z0-9_-]{1,128})\/revisions$/u);
+  if (semanticRevisions && request.method === "GET") return listSemanticRevisions(request, env, semanticRevisions[1]);
+  if (semanticRevisions && request.method === "POST") return createSemanticRevisionApi(request, env, semanticRevisions[1]);
+  const semanticSuggestionAction = url.pathname.match(/^\/api\/v1\/semantics\/suggestions\/([A-Za-z0-9_-]{1,128})\/(dismiss|accept-as-draft)$/u);
+  if (semanticSuggestionAction && request.method === "POST") {
+    if (semanticSuggestionAction[2] === "dismiss") return dismissSemanticSuggestion(request, env, semanticSuggestionAction[1]);
+    return acceptSemanticSuggestionAsDraftApi(request, env, semanticSuggestionAction[1]);
+  }
+  const semanticSuggestion = url.pathname.match(/^\/api\/v1\/semantics\/suggestions\/([A-Za-z0-9_-]{1,128})$/u);
+  if (semanticSuggestion && request.method === "GET") return getSemanticSuggestion(request, env, semanticSuggestion[1]);
+  const semanticAsset = url.pathname.match(/^\/api\/v1\/semantics\/([A-Za-z0-9_-]{1,128})$/u);
+  if (semanticAsset && request.method === "GET") return getSemantic(request, env, semanticAsset[1]);
   const adminUser = url.pathname.match(/^\/api\/v1\/admin\/users\/([0-9a-f-]{36})$/iu);
   if (adminUser && request.method === "PATCH") return updateUser(request, env, adminUser[1]);
   const passwordReset = url.pathname.match(/^\/api\/v1\/admin\/users\/([0-9a-f-]{36})\/reset-password$/iu);

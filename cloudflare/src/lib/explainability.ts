@@ -89,36 +89,116 @@ function label(table: string): string { return LABELS[table] ?? table.replaceAll
 
 function distinct(values: string[], max = 6): string[] { return [...new Set(values.filter(Boolean))].slice(0, max); }
 
+function splitTopLevel(value: string): string[] {
+  const parts: string[] = [];
+  let start = 0;
+  let depth = 0;
+  let quote = "";
+  for (let index = 0; index < value.length; index += 1) {
+    const character = value[index];
+    if (quote) {
+      if (character === quote && value[index - 1] !== "\\") quote = "";
+      continue;
+    }
+    if (character === "'" || character === '"' || character === "`") quote = character;
+    else if (character === "(") depth += 1;
+    else if (character === ")") depth = Math.max(0, depth - 1);
+    else if (character === "," && depth === 0) {
+      parts.push(value.slice(start, index).trim());
+      start = index + 1;
+    }
+  }
+  parts.push(value.slice(start).trim());
+  return parts.filter(Boolean);
+}
+
+function aliasesFromSql(sql: string): Map<string, string> {
+  const aliases = new Map<string, string>();
+  // Do not consume a following JOIN (or clause keyword) as an implicit alias.
+  // This is deliberately a bounded display-only helper: authorization continues
+  // to rely exclusively on QueryPolicyEngine's governed SQL parser.
+  const relationPattern = /\b(?:from|join)\s+([a-z0-9_"`.[\]-]+)(?:(?:\s+as\s+)([a-z_][a-z0-9_]*)|(?:\s+(?!on\b|where\b|group\b|order\b|having\b|limit\b|offset\b|union\b|intersect\b|except\b|window\b|inner\b|left\b|right\b|full\b|cross\b|join\b)([a-z_][a-z0-9_]*)))?/giu;
+  for (const match of sql.matchAll(relationPattern)) {
+    const table = (match[1] ?? "").replace(/["`[\]]/gu, "").split(".").pop()?.toLowerCase();
+    const alias = (match[2] ?? match[3])?.toLowerCase();
+    if (!table) continue;
+    aliases.set(table, table);
+    if (alias && !/^(?:on|where|group|order|having|limit|offset|inner|left|right|full|cross|join)$/u.test(alias)) aliases.set(alias, table);
+  }
+  return aliases;
+}
+
+function dimensionForExpression(expression: string, aliases: Map<string, string>): string | null {
+  const cleaned = expression.replace(/\s+(?:asc|desc)\b(?:\s+nulls\s+(?:first|last))?$/iu, "").replace(/["`[\]]/gu, "").trim();
+  if (!cleaned || /\b(?:case|cast|date|strftime|coalesce)\b/iu.test(cleaned)) return null;
+  const qualified = /^(?:([a-z0-9_]+)\.)?([a-z0-9_]+)$/iu.exec(cleaned);
+  if (!qualified) return null;
+  const relation = qualified[1]?.toLowerCase();
+  const column = qualified[2].toLowerCase();
+  const table = relation ? aliases.get(relation) : undefined;
+  if (column === "shipping_city" || column === "city" || column === "region") return "location";
+  if (column === "status" || column === "state") return "status";
+  if (column === "category" || column === "category_id") return "category";
+  if (column === "supplier_id" || column === "supplier") return "supplier";
+  if (column === "department" || column === "department_id" || column === "dept_id") return "department";
+  if (column === "customer_id" || column === "customer") return "customer";
+  if (column === "product_id" || column === "product") return "product";
+  if (column === "name" || column === "product_name") {
+    if (table === "products" || table === "product_reviews" || table === "inventory_transactions") return "product";
+    if (table === "customers") return "customer";
+    if (table === "departments") return "department";
+    if (table === "categories") return "category";
+    if (table === "suppliers") return "supplier";
+  }
+  return null;
+}
+
+function groupedDimensions(sql: string): string[] {
+  const clause = /\bgroup\s+by\b([\s\S]*?)(?=\border\s+by\b|\bhaving\b|\blimit\b|\boffset\b|\bunion\b|$)/iu.exec(sql)?.[1];
+  if (!clause) return [];
+  const aliases = aliasesFromSql(sql);
+  return distinct(splitTopLevel(clause).map((expression) => dimensionForExpression(expression, aliases) ?? ""));
+}
+
+function aggregateMetrics(sql: string): string[] {
+  const metrics: string[] = [];
+  const aggregatePattern = /\b(count|sum|avg|average|max|min)\s*\(\s*([^)]*)\)/giu;
+  for (const match of sql.matchAll(aggregatePattern)) {
+    const functionName = match[1]?.toLowerCase();
+    const argument = (match[2] ?? "").toLowerCase();
+    if (functionName === "count") metrics.push("count");
+    else if (functionName === "sum" && /(subtotal|total|revenue|sales|amount|price)/u.test(argument)) metrics.push(COLUMN_LABELS.subtotal);
+    else if (functionName === "sum" && /quantity|qty/u.test(argument)) metrics.push(COLUMN_LABELS.quantity);
+    else if (functionName === "avg" || functionName === "average") metrics.push("average");
+    else if (functionName === "max") metrics.push("maximum");
+    else if (functionName === "min") metrics.push("minimum");
+  }
+  return distinct(metrics);
+}
+
+function explicitPromptFilters(prompt: string | null): string[] {
+  const text = (prompt ?? "").toLowerCase();
+  return distinct([
+    /cancelled|canceled|未\s*取\s*消|未取消|非取消/u.test(text) ? "未取消訂單" : "",
+    /active|啟用|啟用中/u.test(text) ? "啟用資料" : "",
+    /處理中|進行中|in\s*progress/u.test(text) ? "處理中的案件" : "",
+  ]);
+}
+
 function queryUnderstanding(prompt: string | null, sql: string): QueryUnderstanding {
   const text = `${prompt ?? ""} ${sql}`.toLowerCase();
-  const metrics: string[] = [];
-  if (/count\s*\(/u.test(text) || /多少|幾筆|數量|筆數|count/u.test(text)) metrics.push("count");
-  if (/sum\s*\(/u.test(text) || /營收|銷售額|sales|revenue|金額/u.test(text)) metrics.push("sales amount");
-  if (/avg\s*\(|average|平均/u.test(text)) metrics.push("average");
-  if (/max\s*\(|最高|最多|top|最大/u.test(text)) metrics.push("maximum");
-  if (/min\s*\(|最低|最少|minimum/u.test(text)) metrics.push("minimum");
-  const dimensions = distinct([
-    /group\s+by\s+[^,]+/u.test(text) ? "grouped dimensions" : "",
-    /product|商品/u.test(text) ? "product" : "",
-    /customer|客戶/u.test(text) ? "customer" : "",
-    /city|城市|地區/u.test(text) ? "location" : "",
-    /department|部門/u.test(text) ? "department" : "",
-    /status|狀態/u.test(text) ? "status" : "",
-  ]);
-  const filters = distinct([
-    /where\b/u.test(text) ? "query filters applied" : "",
-    /cancelled|取消/u.test(text) ? "cancelled records excluded" : "",
-    /active|啟用/u.test(text) ? "active records" : "",
-  ]);
+  const metrics = aggregateMetrics(sql);
+  const dimensions = groupedDimensions(sql);
+  const filters = explicitPromptFilters(prompt);
   const timeRange = /(?:last|past|最近|近)[^\n]{0,30}(?:day|week|month|quarter|year|天|週|月|季|年)/u.exec(text)?.[0] ?? null;
   const ranking = /order\s+by[^\n]{0,80}(?:desc|asc)|top\s+\d+|排行|排名/u.test(text) ? "ordered or ranked results" : null;
-  const intent = metrics.length ? (dimensions.length ? "比較與彙總資料" : "彙總資料") : "檢視符合條件的資料";
+  const intent = metrics.length ? (dimensions.length ? "比較與彙總資料" : "彙總資料") : (dimensions.length ? "分組資料" : "資料查詢");
   const assumptions = distinct([
-    /cancelled|取消/u.test(text) ? "取消訂單不納入分析" : "",
-    /group\s+by/u.test(text) ? "依查詢指定的維度分組" : "",
+    filters.includes("未取消訂單") ? "取消訂單不納入分析" : "",
+    dimensions.length ? "依查詢指定的維度分組" : "",
     "只呈現目前資料權限允許的結果",
   ], 3);
-  return { intent, metrics: metrics.length ? metrics : ["結果筆數"], dimensions, filters, timeRange: timeRange ? compact(timeRange, 80) : null, ranking, assumptions, confidence: prompt ? "high" : "medium" };
+  return { intent, metrics, dimensions, filters, timeRange: timeRange ? compact(timeRange, 80) : null, ranking, assumptions, confidence: prompt && (metrics.length || dimensions.length || filters.length) ? "high" : "medium" };
 }
 
 export function buildQueryExplainability(input: BuildInput): QueryExplainability {
@@ -127,7 +207,13 @@ export function buildQueryExplainability(input: BuildInput): QueryExplainability
   const masked = distinct(input.maskedColumns.map((column) => column.replaceAll("_", " ")), 4);
   const understanding = queryUnderstanding(input.prompt, input.sql);
   const tableText = tables.map((table) => table.label).join("、") || "授權資料來源";
-  const business = `本次查詢使用 ${tableText}，依提出的問題完成唯讀資料整理，共產生 ${input.rowCount} 筆結果。結果已套用目前帳戶的資料範圍、欄位權限與敏感資料遮罩。`;
+  const businessFacts = distinct([
+    `來源：${tableText}`,
+    understanding.metrics.length ? `指標：${understanding.metrics.join("、")}` : "",
+    understanding.dimensions.length ? `分組：${understanding.dimensions.join("、")}` : "",
+    understanding.filters.length ? `條件：${understanding.filters.join("、")}` : "",
+  ], 4).join("；");
+  const business = `${businessFacts || "本次查詢未辨識出額外的業務計算"}；共產生 ${input.rowCount} 筆結果。`;
   const highlights = distinct([
     `來源：${tableText}`,
     understanding.metrics.length ? `分析指標：${understanding.metrics.join("、")}` : "",
@@ -138,6 +224,8 @@ export function buildQueryExplainability(input: BuildInput): QueryExplainability
     masked.length ? `部分欄位已遮罩：${masked.join("、")}。` : "",
     rowPolicyApplied ? "資料列範圍已套用治理規則；未顯示規則內容。" : "",
   ], 3);
+  const sql = input.sql.trim();
+  const rawSqlAvailable = input.rawSqlAvailable && Boolean(sql);
   return {
     version: "p1",
     queryRunId: input.queryRunId,
@@ -147,7 +235,7 @@ export function buildQueryExplainability(input: BuildInput): QueryExplainability
       governance: { scopeApplied: true, rowPolicyApplied, columnPolicyApplied: true, dlpApplied: true },
       result: { rowCount: input.rowCount, truncated: input.truncated },
     },
-    explanation: { business, rawSqlAvailable: input.rawSqlAvailable, ...(input.rawSqlAvailable ? { sql: input.sql } : {}) },
+    explanation: { business, rawSqlAvailable, ...(rawSqlAvailable ? { sql } : {}) },
     summary: { headline: `查詢完成，共 ${input.rowCount} 筆結果`, highlights, caveats },
     feedback: { supported: true, queryRunId: input.queryRunId },
   };

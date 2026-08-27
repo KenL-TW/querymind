@@ -9,8 +9,58 @@ interface DataTable {
 interface ParsedColumn { name: string; type: string; notNull: number; primaryKey: number; defaultValue: string | null; references?: { table: string; column: string } }
 interface ParsedForeignKey { column: string; referencedTable: string; referencedColumn: string }
 
+export interface AuthorizedCatalogColumn {
+  name: string;
+  dataType: string;
+  nullable: boolean;
+  primaryKey: boolean;
+  /** A catalog-maintained label, never a policy value or business row. */
+  label: string;
+}
+
+export interface AuthorizedCatalogForeignKey {
+  table: string;
+  column: string;
+  referencedTable: string;
+  referencedColumn: string;
+}
+
+export interface AuthorizedCatalogTable {
+  name: string;
+  label: string;
+  columns: AuthorizedCatalogColumn[];
+}
+
+/**
+ * The metadata projection used by design-time features after EffectiveScope
+ * has been resolved. It intentionally excludes CREATE TABLE SQL, row-policy
+ * predicates, scope keys, credentials, and every business-data value.
+ */
+export interface AuthorizedSchemaCatalog {
+  schemaSnapshotId: string;
+  tables: AuthorizedCatalogTable[];
+  foreignKeys: AuthorizedCatalogForeignKey[];
+}
+
 const MAX_BIND_PARAMETERS = 96;
 const MAX_SCHEMA_CONTEXT_CHARACTERS = 32_000;
+
+/**
+ * Stable identity for the physical D1 catalog snapshot. The identity is
+ * derived only from the filtered table names and CREATE TABLE SQL, so the
+ * same physical catalog always produces the same value while any DDL change
+ * produces a different value. This is provenance metadata, not schema
+ * history, and it must never be used as an authorization decision.
+ */
+export async function schemaSnapshotId(tables: readonly DataTable[]): Promise<string> {
+  const canonical = tables
+    .filter((table) => Boolean(table.sql))
+    .map((table) => `${table.name}\u0000${table.sql ?? ""}`)
+    .sort()
+    .join("\n");
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(canonical));
+  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
 
 function splitDefinitions(sql: string): string[] {
   const body = sql.slice(sql.indexOf("(" ) + 1, sql.lastIndexOf(")"));
@@ -62,6 +112,7 @@ export async function refreshSchemaCatalog(env: Env): Promise<{ tableCount: numb
   // schema and must never be exposed to the agent or the product catalog.
   const tables = (await env.QUERYMIND_DATA.prepare("SELECT name, sql FROM sqlite_schema WHERE type = 'table' AND sql IS NOT NULL AND name NOT LIKE 'sqlite_%' AND name NOT LIKE 'd1_%' AND name NOT LIKE '_cf_%' ORDER BY name").all<DataTable>()).results ?? [];
   const now = new Date().toISOString();
+  const snapshotId = await schemaSnapshotId(tables);
   const statements: D1PreparedStatement[] = [
     env.QUERYMIND_APP.prepare("DELETE FROM schema_catalog_foreign_keys"),
     env.QUERYMIND_APP.prepare("DELETE FROM schema_catalog_columns"),
@@ -84,10 +135,64 @@ export async function refreshSchemaCatalog(env: Env): Promise<{ tableCount: numb
   statements.push(...insertRows(env.QUERYMIND_APP, "INSERT INTO schema_catalog_columns (table_name, column_name, ordinal_position, data_type, is_not_null, is_primary_key, default_value, description)", columnRows));
   const uniqueForeignKeys = [...new Map(foreignKeyRows.map((row) => [row.join("\u0000"), row])).values()];
   statements.push(...insertRows(env.QUERYMIND_APP, "INSERT INTO schema_catalog_foreign_keys (table_name, column_name, referenced_table, referenced_column)", uniqueForeignKeys));
-  statements.push(env.QUERYMIND_APP.prepare("INSERT INTO schema_catalog_state (id, source_schema_version, refreshed_at, table_count) VALUES (1, 'd1', ?, ?) ON CONFLICT(id) DO UPDATE SET source_schema_version = excluded.source_schema_version, refreshed_at = excluded.refreshed_at, table_count = excluded.table_count").bind(now, tables.filter((table) => Boolean(table.sql)).length));
+  statements.push(env.QUERYMIND_APP.prepare("INSERT INTO schema_catalog_state (id, source_schema_version, schema_snapshot_id, refreshed_at, table_count) VALUES (1, 'd1', ?, ?, ?) ON CONFLICT(id) DO UPDATE SET source_schema_version = excluded.source_schema_version, schema_snapshot_id = excluded.schema_snapshot_id, refreshed_at = excluded.refreshed_at, table_count = excluded.table_count").bind(snapshotId, now, tables.filter((table) => Boolean(table.sql)).length));
   if (statements.length > 50) throw new HttpError(413, "SCHEMA_TOO_LARGE", "Schema catalog exceeds the Free-plan refresh budget.");
   await env.QUERYMIND_APP.batch(statements);
   return { tableCount: tables.length, refreshedAt: now };
+}
+
+function allowedColumn(scope: EffectiveScope, tableName: string, columnName: string): boolean {
+  const policy = scope.datasource.tables[tableName.toLowerCase()];
+  return Boolean(policy && (policy.columns === "*" || policy.columns.includes(columnName.toLowerCase())));
+}
+
+/**
+ * Read the authoritative app-D1 catalog only after the caller has obtained an
+ * EffectiveScope. This is deliberately structured rather than reusing the
+ * chat string context so future callers cannot accidentally pass row-policy
+ * details or raw DDL to a model.
+ */
+export async function authorizedSchemaCatalog(env: Env, scope: EffectiveScope): Promise<AuthorizedSchemaCatalog> {
+  const [state, tableResult, columnResult, foreignKeyResult] = await Promise.all([
+    env.QUERYMIND_APP.prepare("SELECT schema_snapshot_id FROM schema_catalog_state WHERE id = 1").first<{ schema_snapshot_id: string | null }>(),
+    env.QUERYMIND_APP.prepare("SELECT table_name, description FROM schema_catalog_tables ORDER BY table_name").all<{ table_name: string; description: string }>(),
+    env.QUERYMIND_APP.prepare("SELECT table_name, column_name, data_type, is_not_null, is_primary_key, description FROM schema_catalog_columns ORDER BY table_name, ordinal_position").all<{ table_name: string; column_name: string; data_type: string; is_not_null: number; is_primary_key: number; description: string }>(),
+    env.QUERYMIND_APP.prepare("SELECT table_name, column_name, referenced_table, referenced_column FROM schema_catalog_foreign_keys ORDER BY table_name, column_name, referenced_table, referenced_column").all<{ table_name: string; column_name: string; referenced_table: string; referenced_column: string }>(),
+  ]);
+  const schemaSnapshotId = state?.schema_snapshot_id?.trim() ?? "";
+  if (!schemaSnapshotId || schemaSnapshotId === "uninitialized") {
+    throw new HttpError(409, "SCHEMA_CATALOG_EMPTY", "Schema catalog is empty. Refresh it before using schema intelligence.");
+  }
+  const allowedTables = new Set(Object.keys(scope.datasource.tables));
+  const columns = columnResult.results ?? [];
+  const groupedColumns = new Map<string, AuthorizedCatalogColumn[]>();
+  for (const column of columns) {
+    if (!allowedTables.has(column.table_name.toLowerCase()) || !allowedColumn(scope, column.table_name, column.column_name)) continue;
+    const key = column.table_name.toLowerCase();
+    groupedColumns.set(key, [...(groupedColumns.get(key) ?? []), {
+      name: column.column_name,
+      dataType: column.data_type,
+      nullable: column.is_not_null !== 1,
+      primaryKey: column.is_primary_key === 1,
+      label: column.description ?? "",
+    }]);
+  }
+  const tables = (tableResult.results ?? []).flatMap((table) => {
+    const key = table.table_name.toLowerCase();
+    if (!allowedTables.has(key)) return [];
+    return [{ name: table.table_name, label: table.description ?? "", columns: groupedColumns.get(key) ?? [] }];
+  });
+  if (tables.length === 0) throw new HttpError(409, "SCHEMA_CATALOG_EMPTY", "No authorized schema catalog is available.");
+  const foreignKeys = (foreignKeyResult.results ?? []).flatMap((foreignKey) => {
+    if (
+      !allowedTables.has(foreignKey.table_name.toLowerCase())
+      || !allowedTables.has(foreignKey.referenced_table.toLowerCase())
+      || !allowedColumn(scope, foreignKey.table_name, foreignKey.column_name)
+      || !allowedColumn(scope, foreignKey.referenced_table, foreignKey.referenced_column)
+    ) return [];
+    return [{ table: foreignKey.table_name, column: foreignKey.column_name, referencedTable: foreignKey.referenced_table, referencedColumn: foreignKey.referenced_column }];
+  });
+  return { schemaSnapshotId, tables, foreignKeys };
 }
 
 export async function schemaContext(env: Env, scope?: EffectiveScope): Promise<string> {

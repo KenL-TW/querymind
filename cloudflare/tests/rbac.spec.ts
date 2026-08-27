@@ -29,8 +29,18 @@ test.describe("API authorization boundary", () => {
     const viewerApi = await playwright.request.newContext({ baseURL: absoluteUrl("/") });
     let ownerSessionId = "";
     let viewerSessionId = "";
+    let originalViewerCapabilities: string[] | null = null;
     try {
       await loginApi(ownerApi, ownerCredentials);
+      const rolesResponse = await ownerApi.get("/api/v1/admin/roles");
+      await expectOk(rolesResponse, "list roles before capability-gated SQL test");
+      const roles = (await rolesResponse.json() as { roles: Array<{ roleName: string; capabilities: string[] }> }).roles;
+      originalViewerCapabilities = roles.find((role) => role.roleName === "viewer")?.capabilities ?? null;
+      expect(originalViewerCapabilities, "viewer role must exist for the capability-gated SQL test").not.toBeNull();
+      const noSchemaCapabilities = originalViewerCapabilities!.filter((capability) => capability !== "view_schema");
+      expect(noSchemaCapabilities).not.toEqual(originalViewerCapabilities);
+      const removeSchemaCapability = await ownerApi.patch("/api/v1/admin/roles/viewer", { data: { capabilities: noSchemaCapabilities } });
+      await expectOk(removeSchemaCapability, "remove view_schema from disposable viewer role");
       const ownerSession = await ownerApi.post("/api/v1/sessions", { data: { title: `Owner private ${Date.now()}` } });
       await expectOk(ownerSession, "create owner session");
       ownerSessionId = ((await ownerSession.json()) as { session: { id: string } }).session.id;
@@ -53,7 +63,14 @@ test.describe("API authorization boundary", () => {
       }
 
       const schema = await viewerApi.get("/api/v1/schema");
-      await expectOk(schema, "viewer schema access");
+      expect(schema.status()).toBe(403);
+      await expect(schema.json()).resolves.toMatchObject({ error: "RBAC_FORBIDDEN" });
+      const governedViewerQuery = await viewerApi.post("/api/v1/query", { data: { sql: "SELECT COUNT(*) AS order_count FROM orders" } });
+      await expectOk(governedViewerQuery, "viewer governed direct query");
+      const governedViewerPayload = await governedViewerQuery.json() as { sql?: string; explainability: { explanation: { rawSqlAvailable: boolean; sql?: string } } };
+      expect(governedViewerPayload).not.toHaveProperty("sql");
+      expect(governedViewerPayload.explainability.explanation).toMatchObject({ rawSqlAvailable: false });
+      expect(governedViewerPayload.explainability.explanation).not.toHaveProperty("sql");
       const createViewerSession = await viewerApi.post("/api/v1/sessions", { data: { title: `Viewer ${Date.now()}` } });
       await expectOk(createViewerSession, "viewer session creation");
       viewerSessionId = ((await createViewerSession.json()) as { session: { id: string } }).session.id;
@@ -90,6 +107,10 @@ test.describe("API authorization boundary", () => {
     } finally {
       if (viewerSessionId) await viewerApi.delete(`/api/v1/sessions/${viewerSessionId}`);
       if (ownerSessionId) await ownerApi.delete(`/api/v1/sessions/${ownerSessionId}`);
+      if (originalViewerCapabilities) {
+        const restoreViewerRole = await ownerApi.patch("/api/v1/admin/roles/viewer", { data: { capabilities: originalViewerCapabilities } });
+        await expectOk(restoreViewerRole, "restore disposable viewer role");
+      }
       await Promise.all([ownerApi.dispose(), viewerApi.dispose()]);
     }
   });
@@ -161,7 +182,12 @@ test.describe("API authorization boundary", () => {
         firstApi.patch(`/api/v1/admin/users/${secondOwner.id}`, { data: { roleName: "viewer", isActive: true } }),
         secondApi.patch(`/api/v1/admin/users/${firstOwner.id}`, { data: { roleName: "viewer", isActive: true } }),
       ]);
-      expect([demoteSecond.status(), demoteFirst.status()].sort()).toEqual([200, 400]);
+      const demotionStatuses = [demoteSecond.status(), demoteFirst.status()];
+      // The losing request may observe the actor's role revocation before its
+      // owner-protection UPDATE predicate runs. Both 400 (atomic owner
+      // protection) and 403 (authorization re-check) preserve the invariant.
+      expect(demotionStatuses.filter((status) => status === 200)).toHaveLength(1);
+      expect(demotionStatuses.every((status) => status === 200 || status === 400 || status === 403)).toBe(true);
 
       const survivorApi = demoteSecond.ok() ? firstApi : secondApi;
       const usersResponse = await survivorApi.get("/api/v1/admin/users");
