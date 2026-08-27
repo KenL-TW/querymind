@@ -31,6 +31,12 @@ jobs:
         working-directory: cloudflare
         run: npm run test:unit
 
+      - name: Validate released migrations and manifest
+        working-directory: cloudflare
+        run: |
+          npm run migration:check
+          npm run release:manifest:check
+
       - name: Install browser for product E2E
         working-directory: cloudflare
         run: npx playwright install chromium --with-deps
@@ -47,6 +53,7 @@ jobs:
             --var=ENVIRONMENT:local \
             --var=AI_MOCK_MODE:true \
             --var=AUTH_REQUIRED:true \
+            --var=AUTH_LOGIN_ATTEMPTS_PER_15_MINUTES:100 \
             --var=AUTH_JWT_SECRET:ci-only-jwt-secret-querymind-2026 \
             --var=AUTH_BOOTSTRAP_TOKEN:ci-only-bootstrap-token-querymind-2026 \
             --var=AUTH_PASSWORD_PEPPER:ci-only-password-pepper-querymind-2026 \
@@ -73,13 +80,13 @@ jobs:
             --request POST \
             --cookie .ci-cookie.txt \
             http://127.0.0.1:8787/api/v1/schema/refresh >/dev/null
-          QUERYMIND_TEST_URL=http://127.0.0.1:8787 npm run test:e2e
+          QUERYMIND_TEST_URL=http://127.0.0.1:8787 npm run test:all
 
-      - name: Validate Worker deployment bundle
+      - name: Validate production-compatible Worker deployment bundle
         working-directory: cloudflare
         run: npm run deploy:dry-run
 
-  repo-checks:
+  legacy-regression-only:
     runs-on: ubuntu-latest
 
     steps:

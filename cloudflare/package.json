@@ -15,7 +15,12 @@
     "test:unit": "playwright test tests/security.spec.ts tests/explainability.spec.ts tests/semantic.spec.ts tests/semantic-suggestions.spec.ts",
     "test:e2e": "playwright test tests/app.spec.ts tests/rbac.spec.ts tests/semantic-api.spec.ts tests/semantic-suggestions-api.spec.ts tests/semantic-suggestions-ui.spec.ts",
     "test:all": "playwright test",
-    "deploy:dry-run": "wrangler deploy --dry-run"
+    "migration:check": "node scripts/check-migration-immutability.mjs",
+    "release:manifest:check": "node scripts/release-manifest.mjs",
+    "release:preflight": "node scripts/release-preflight.mjs",
+    "smoke:production": "node scripts/smoke-production.mjs",
+    "deploy:dry-run": "wrangler deploy --dry-run",
+    "deploy:production": "node scripts/deploy-production.mjs"
   },
   "devDependencies": {
     "@types/node": "^22.15.30",

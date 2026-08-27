@@ -1,0 +1,15 @@
+{
+  "workerName": "querymind",
+  "environment": "production",
+  "authRequired": true,
+  "aiMockMode": false,
+  "gatewayHost": "gateway.ai.cloudflare.com",
+  "gatewayName": "querymind-prod",
+  "gatewayPathSuffix": "/querymind-prod/openai/chat/completions",
+  "byokAlias": "production",
+  "allowedOpenAiModels": ["gpt-4o", "gpt-4o-mini"],
+  "requiredD1Bindings": ["QUERYMIND_APP", "QUERYMIND_DATA"],
+  "requiredSecretNames": ["AI_GATEWAY_TOKEN", "AUTH_BOOTSTRAP_TOKEN", "AUTH_JWT_SECRET", "AUTH_PASSWORD_PEPPER"],
+  "expectedPolicyVersion": "p0-governed-query-safety-core-v1",
+  "expectedPolicyCount": 72
+}

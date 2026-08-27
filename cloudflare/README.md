@@ -1,56 +1,43 @@
-# QueryMind Cloudflare runtime
+# QueryMind Cloudflare Runtime
 
-This directory is the replacement runtime for QueryMind. It is deliberately isolated from the existing Python service until the migration acceptance tests pass.
+This directory is the active QueryMind production runtime: a Cloudflare Worker, static SPA, two D1 databases, and Cloudflare AI Gateway using OpenAI BYOK. FastAPI/Nuxt/PostgreSQL/AWS materials elsewhere in the repository are legacy references.
 
-## Local start
+## Current baseline
+
+- Worker: `querymind`; released Production version `31693496-e2b8-4110-92d6-40f61035f182`
+- APP migrations: `0001`–`0010`; DATA migrations: `0001`
+- P0: governed SQL safety; P1: explainability and feedback
+- P2-A/B/C: design-time Semantic Registry; P2-D: human-reviewable AI schema suggestions
+- AI: Cloudflare AI Gateway `querymind-prod`, OpenAI BYOK alias `production`
+- Baseline tests: 94 unit, 19 E2E, 113 full
+
+## Local reproducibility
 
 ```powershell
-cd cloudflare
-npm install
+npm ci
 npm run check
 npm run test:db:init
-npm run dev
+npm run migration:check
+npm run release:manifest:check
+npm run test:all
 ```
 
-Open `http://localhost:8787/health`. Wrangler creates local D1 state under `.wrangler/`; it is ignored by Git.
+The disposable D1 initializer always starts from an empty `.wrangler-test` directory. It does not use remote bindings or production credentials.
 
-`test:db:init` creates a separate disposable `.wrangler-test/` database for release E2E and applies application migrations `0001`–`0007`. This includes the DLP hardening (`0005`), governed query-policy state (`0006`) and explainability/feedback schema (`0007`); the command never accesses remote D1. To exercise that disposable database, start `npm run dev:test`, bootstrap the first Owner with the token in your local `.dev.vars`, then run `npm run test:e2e`.
+## Safe deployment process
 
-The CI workflow performs the same bootstrap and then refreshes the local schema catalog before E2E. Product history is bounded to a 25-row/32 KB masked preview; unpinned conversations older than 90 days and audit/query/usage metadata older than 180 days are pruned opportunistically when a new session is created, so no paid scheduler is required.
+1. Follow [PRODUCTION_RUNBOOK.md](PRODUCTION_RUNBOOK.md).
+2. Apply a reviewed D1 migration separately, when and only when a release contains one.
+3. From a clean `main` checkout, run `npm run release:preflight` and `npm run deploy:dry-run`.
+4. `npm run deploy:production` runs preflight and dry-run before a Worker deploy. It never invokes D1 migrations and uses `wrangler.production.jsonc`, whose `keep_vars` setting protects existing production vars/secrets from preview/mock config.
+5. Run `npm run smoke:production`; authenticated checks are opt-in through an existing operator-supplied authorization header.
 
-The Playwright default URL and `npm run dev` both use port `8787`. Set `QUERYMIND_BROWSER_CHANNEL=chrome` only when the bundled Playwright Chromium is unavailable and a system Chrome installation should be used.
+On Windows, do not pass a comma-separated model allowlist directly as a Wrangler CLI argument. The production helper reads the version-controlled JSON contract instead, avoiding PowerShell argument splitting.
 
-### Windows path note
+## Boundaries that must remain true
 
-Wrangler/esbuild can fail to resolve an entry point when its parent path contains non-ASCII characters. If this happens locally on Windows, temporarily map this directory to an unused ASCII drive letter before running `npm run dev`, then remove the mapping after stopping the server:
-
-```powershell
-subst Q: $PWD
-Set-Location Q:\
-npm run dev
-# After stopping Wrangler, return to the original path and run: subst Q: /D
-```
-
-## D1 bindings
-
-`QUERYMIND_DATA` stores the single business database available to QueryMind. `QUERYMIND_APP` stores sessions, audit events, and application metadata. Both bindings in `wrangler.jsonc` currently point to the deployed APAC D1 databases; use separate IDs if creating another environment.
-
-## Data migration rehearsal
-
-For a deterministic local data set, apply `seeds/demo.sql` after the data migration. Production data uses a CSV handoff so the OpenAI/Worker runtime never receives PostgreSQL credentials:
-
-1. Set standard `PGHOST`, `PGDATABASE`, `PGUSER`, and `PGPASSWORD` environment variables in a trusted operator shell.
-2. Run `./scripts/export-postgres.ps1 -OutputDirectory ./migration-input`.
-3. Run `node ./scripts/csv-to-d1.mjs --input ./migration-input --output ./migration-output/data.sql`.
-4. Import the generated SQL into an empty D1 database with Wrangler.
-5. Run the statements in `verification/business_queries.sql` against PostgreSQL and D1 and compare the results.
-
-The CSV input and generated production SQL may contain personal data. Keep both outside version control and remove them according to the migration runbook after acceptance.
-
-## Secrets and AI Gateway
-
-No OpenAI or Cloudflare credential belongs in this repository. Production auth secrets are stored with Cloudflare Worker secrets. The preview uses AI mock; the later production switch will store the OpenAI key in AI Gateway BYOK and expose only the Gateway token to the Worker. Put only non-production values in `.dev.vars`.
-
-## Deployment boundary
-
-The current deployment is <https://querymind.digitalaaronl.workers.dev> in `preview + AI mock` mode for frontend acceptance. Do not switch `ENVIRONMENT` to `production` until AI Gateway BYOK, formal data, spend limits, and the production verification checklist are complete.
+- EffectiveScope resolves before authorized catalog retrieval.
+- LLM requests contain only authorized catalog metadata.
+- Chat, direct query, saved insight, and export all use QueryPolicyEngine before `QUERYMIND_DATA` execution.
+- P2 semantic assets/suggestions are not runtime query inputs; AI suggestions cannot approve truth.
+- Secrets are Cloudflare secrets, never Worker vars, source, manifests, smoke scripts, or logs.

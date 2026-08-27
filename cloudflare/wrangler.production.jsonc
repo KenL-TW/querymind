@@ -1,0 +1,40 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "querymind",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-11",
+  "compatibility_flags": ["nodejs_compat"],
+  "keep_vars": true,
+  "observability": {
+    "enabled": true,
+    "logs": {
+      "enabled": true,
+      "head_sampling_rate": 1,
+      "invocation_logs": true
+    },
+    "traces": {
+      "enabled": true,
+      "head_sampling_rate": 0.05
+    }
+  },
+  "d1_databases": [
+    {
+      "binding": "QUERYMIND_DATA",
+      "database_name": "querymind-data",
+      "database_id": "7082aa34-6598-4f0a-9522-30f9fd41830b",
+      "migrations_dir": "migrations/data"
+    },
+    {
+      "binding": "QUERYMIND_APP",
+      "database_name": "querymind-app",
+      "database_id": "31aa9906-6ced-4a9c-9b46-1af029e3271f",
+      "migrations_dir": "migrations/app"
+    }
+  ],
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "run_worker_first": true,
+    "not_found_handling": "single-page-application"
+  }
+}

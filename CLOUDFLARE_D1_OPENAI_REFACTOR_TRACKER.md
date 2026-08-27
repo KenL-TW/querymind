@@ -1,5 +1,11 @@
 # QueryMind Cloudflare D1 + OpenAI 重構追蹤表
 
+## 2026-08-27: R14 Post-P2-D source-of-truth and reproducibility hardening
+
+| ID | Status | Delivered | Verification / current state |
+|---|---|---|---|
+| R14 | In progress | Reconciliation report identifies local released P0–P2-D source as the production-aligned baseline and GitHub `main` as lagging. The baseline source has been committed as `2b0c395307aee26febcb4790a946e8a3da27d79d`; release hardening adds immutable migration validation, machine-readable manifest, production preflight/deploy/smoke helpers, clean-room CI alignment, architecture/handover/runbook/observability/RACI docs, and explicit legacy marking. | Target remains Worker `31693496-e2b8-4110-92d6-40f61035f182`; rollback `5e4ca4b6-8ba1-4259-b2ea-25e6dc9bbfaa`; APP `0001`–`0010`, DATA `0001`, schema snapshot `9fc08cbf8ee017c5f6041f7eaa6b7a0b0411b185f4d7e503e0ca47ecdc3b49d3`, P0 policy `p0-governed-query-safety-core-v1`/72. P0, P1, P1.1, P2-A, P2-B, P2-C are COMPLETE; P2-D code/deployment is COMPLETE; P2-D manual mutation gate is PENDING. R14 completion awaits all regression/reproducibility gates and normal remote source synchronization. |
+
 ## 2026-08-24: P2-D AI Schema Intelligence Draft Suggestions
 
 | ID | Status | Delivered | Verification / current state |

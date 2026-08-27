@@ -1,0 +1,30 @@
+{
+  "releaseId": "querymind-p2d-production-2026-08",
+  "phase": "P2-D",
+  "gitSha": "2b0c395307aee26febcb4790a946e8a3da27d79d",
+  "workerVersionId": "31693496-e2b8-4110-92d6-40f61035f182",
+  "previousWorkerVersionId": "5e4ca4b6-8ba1-4259-b2ea-25e6dc9bbfaa",
+  "appMigration": "0010",
+  "dataMigration": "0001",
+  "schemaSnapshotId": "9fc08cbf8ee017c5f6041f7eaa6b7a0b0411b185f4d7e503e0ca47ecdc3b49d3",
+  "policyVersion": "p0-governed-query-safety-core-v1",
+  "policyCount": 72,
+  "semanticRegistryVersion": 0,
+  "semanticAssets": 0,
+  "semanticRevisions": 0,
+  "semanticReviews": 0,
+  "modelProvider": "openai",
+  "gateway": "querymind-prod",
+  "byokAlias": "production",
+  "promptVersions": ["p2d-schema-intelligence-v1"],
+  "tests": {
+    "unit": { "passed": 94, "total": 94 },
+    "e2e": { "passed": 19, "total": 19 },
+    "full": { "passed": 113, "total": 113 }
+  },
+  "environment": "production",
+  "aiMockMode": false,
+  "productionManualGate": "PENDING",
+  "releasedAt": "2026-08-27T00:00:00.000Z",
+  "rollbackWorker": "5e4ca4b6-8ba1-4259-b2ea-25e6dc9bbfaa"
+}
