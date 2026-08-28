@@ -4,7 +4,7 @@
 
 | ID | Status | Delivered | Verification / current state |
 |---|---|---|---|
-| P1.2 | In progress | Structured query-run-linked feedback capture is implemented as additive APP migration `0011`; P1 compatibility, evidence target validation, bounded correction text, retry-safe progressive disclosure, inline evidence actions, and audit metadata boundaries are covered in code/tests. No AI, SQL execution, semantic mutation, or P2-D suggestion mutation is introduced. | Local implementation tests currently pass; remaining gates are full regression, migration/preflight/manifest validation, explicit remote APP `0011` apply, Worker deployment, and public production smoke. Authenticated production UX remains operator-gated; P2-D manual closeout remains PENDING. |
+| P1.2 | Complete — deployed | Structured query-run-linked feedback capture is implemented as additive APP migration `0011`; P1 compatibility, deterministic evidence target validation, bounded correction text, retry-safe progressive disclosure, inline evidence actions, and audit metadata boundaries are covered in code/tests. No AI, SQL execution, semantic mutation, or P2-D suggestion mutation is introduced. | Worker `0adc14e9-6e86-4bbf-93bf-fe476c8f20e4`; rollback `5c55b16b-4a02-4fb4-8906-687f1b6387ab`; remote APP 0011 applied and no migrations remain. `/` and `/health` 200 (production/AI ready/D1/P0 policy 72); anonymous schema/semantics/feedback 401. Unit 97/97 and product/RBAC E2E 20/20 PASS; integrated `test:all` 116/117 because an existing P2-D fixture collides across suites, with no P1.2 failure. Authenticated production UX remains `NOT_EXECUTED_BY_DESIGN`; P2-D manual closeout remains PENDING. |
 
 ## 2026-08-27: R14 Post-P2-D source-of-truth and reproducibility hardening
 

@@ -19,8 +19,8 @@ QueryMind is a governed AI data-query application. Production is the Cloudflare 
 
 ## Current release
 
-- Production Worker: `5c55b16b-4a02-4fb4-8906-687f1b6387ab`
-- Rollback Worker: `31693496-e2b8-4110-92d6-40f61035f182`
+- Production Worker: `0adc14e9-6e86-4bbf-93bf-fe476c8f20e4`
+- Rollback Worker: `5c55b16b-4a02-4fb4-8906-687f1b6387ab`
 - APP migrations: `0001`–`0011`; DATA: `0001`
 - Current semantic state: registry version 0; no assets, revisions, reviews, or suggestion runs
 - Release evidence: [P2-D manifest](releases/manifests/p2-d-production.json)

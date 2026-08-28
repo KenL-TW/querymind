@@ -2,7 +2,7 @@
   "releaseId": "querymind-p1.2-feedback-trust-2026-08",
   "phase": "P1.2",
   "gitSha": "cac7a8efda7bbb26c6a048ed373e3ea78ee50c97",
-  "workerVersionId": "5c55b16b-4a02-4fb4-8906-687f1b6387ab",
+  "workerVersionId": "0adc14e9-6e86-4bbf-93bf-fe476c8f20e4",
   "previousWorkerVersionId": "5c55b16b-4a02-4fb4-8906-687f1b6387ab",
   "appMigration": "0011",
   "dataMigration": "0001",
