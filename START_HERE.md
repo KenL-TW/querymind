@@ -11,7 +11,7 @@ Browser → static SPA → Cloudflare Worker → authentication/RBAC → Effecti
 ```
 
 Current production: `https://querymind.digitalaaronl.workers.dev`
-Current Worker: `31693496-e2b8-4110-92d6-40f61035f182`
+Current Worker: `5c55b16b-4a02-4fb4-8906-687f1b6387ab`
 Current release evidence: [P2-D manifest](docs/releases/manifests/p2-d-production.json)
 
 ## 2. Repository Active Runtime

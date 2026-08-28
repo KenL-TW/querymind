@@ -1,9 +1,9 @@
 {
   "releaseId": "querymind-p2d-production-2026-08",
   "phase": "P2-D",
-  "gitSha": "2b0c395307aee26febcb4790a946e8a3da27d79d",
-  "workerVersionId": "31693496-e2b8-4110-92d6-40f61035f182",
-  "previousWorkerVersionId": "5e4ca4b6-8ba1-4259-b2ea-25e6dc9bbfaa",
+  "gitSha": "e5e3bec1c705eac3d3fb2ad1fdfc6704b89769fc",
+  "workerVersionId": "5c55b16b-4a02-4fb4-8906-687f1b6387ab",
+  "previousWorkerVersionId": "31693496-e2b8-4110-92d6-40f61035f182",
   "appMigration": "0010",
   "dataMigration": "0001",
   "schemaSnapshotId": "9fc08cbf8ee017c5f6041f7eaa6b7a0b0411b185f4d7e503e0ca47ecdc3b49d3",
@@ -25,6 +25,6 @@
   "environment": "production",
   "aiMockMode": false,
   "productionManualGate": "PENDING",
-  "releasedAt": "2026-08-27T00:00:00.000Z",
-  "rollbackWorker": "5e4ca4b6-8ba1-4259-b2ea-25e6dc9bbfaa"
+  "releasedAt": "2026-08-28T12:05:53.105Z",
+  "rollbackWorker": "31693496-e2b8-4110-92d6-40f61035f182"
 }

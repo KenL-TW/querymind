@@ -4,7 +4,7 @@ This directory is the active QueryMind production runtime: a Cloudflare Worker, 
 
 ## Current baseline
 
-- Worker: `querymind`; released Production version `31693496-e2b8-4110-92d6-40f61035f182`
+- Worker: `querymind`; released Production version `5c55b16b-4a02-4fb4-8906-687f1b6387ab`
 - APP migrations: `0001`–`0010`; DATA migrations: `0001`
 - P0: governed SQL safety; P1: explainability and feedback
 - P2-A/B/C: design-time Semantic Registry; P2-D: human-reviewable AI schema suggestions
