@@ -13,7 +13,11 @@ const expected = {
 };
 
 for (const [name, hash] of Object.entries(expected)) {
-  const actual = createHash("sha256").update(readFileSync(path.join(root, "migrations", "app", name))).digest("hex");
+  // Git may materialize text files with CRLF on Windows. Hash the canonical LF
+  // representation so the released migration contract is checkout-independent.
+  const canonicalSql = readFileSync(path.join(root, "migrations", "app", name), "utf8")
+    .replace(/\r\n?/g, "\n");
+  const actual = createHash("sha256").update(canonicalSql, "utf8").digest("hex");
   if (actual !== hash) throw new Error(`Released migration changed: ${name}`);
 }
 console.log("Released migrations 0006-0010 are immutable.");
