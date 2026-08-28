@@ -36,6 +36,7 @@ jobs:
         run: |
           npm run migration:check
           npm run release:manifest:check
+          npm run release:manifest:p12
 
       - name: Install browser for product E2E
         working-directory: cloudflare

@@ -115,7 +115,7 @@ test.describe("P1 explainability contract", () => {
   });
 });
 
-function feedbackEnv(runUserId = "local-anonymous") {
+function feedbackEnv(runUserId = "local-anonymous", explainabilityJson: string | null = null, outcome = "success") {
   const calls: string[] = [];
   const database = {
     prepare(sql: string) {
@@ -123,7 +123,7 @@ function feedbackEnv(runUserId = "local-anonymous") {
       return {
         bind(...values: unknown[]) { (this as { values?: unknown[] }).values = values; return this; },
         values: [] as unknown[],
-        async first() { return sql.includes("SELECT id, user_id, outcome") ? { id: "33333333-3333-4333-8333-333333333333", user_id: runUserId, outcome: "success" } : null; },
+        async first() { return sql.includes("SELECT id, user_id, outcome") ? { id: "33333333-3333-4333-8333-333333333333", user_id: runUserId, outcome, explainability_json: explainabilityJson } : null; },
         async run() { return { meta: { changes: 1 } }; },
       };
     },
@@ -144,5 +144,34 @@ test.describe("query feedback", () => {
   test("does not reveal or mutate another user's query run", async () => {
     const { env } = feedbackEnv("other-user");
     await expect(submitQueryFeedback(new Request("https://querymind.example/api/v1/query-runs/33333333-3333-4333-8333-333333333333/feedback", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ rating: "positive" }) }), env)).rejects.toMatchObject({ status: 404, code: "QUERY_RUN_NOT_FOUND" });
+  });
+
+  test("accepts P1.2 evidence-linked correction without provider or business-data execution", async () => {
+    const explainability = JSON.stringify({
+      version: "p1", queryRunId: "33333333-3333-4333-8333-333333333333",
+      understanding: { intent: "比較與彙總資料", metrics: ["sales amount"], dimensions: ["product"], filters: [], timeRange: null, ranking: null, assumptions: [], confidence: "high" },
+      sources: { tables: [{ name: "products", label: "Products" }], governance: { scopeApplied: true, rowPolicyApplied: false, columnPolicyApplied: true, dlpApplied: true }, result: { rowCount: 1, truncated: false } },
+      explanation: { business: "指標：sales amount", rawSqlAvailable: false }, summary: { headline: "查詢完成", highlights: [], caveats: [] }, feedback: { supported: true, queryRunId: "33333333-3333-4333-8333-333333333333" },
+    });
+    const { env, calls } = feedbackEnv("local-anonymous", explainability);
+    const response = await submitQueryFeedback(new Request("https://querymind.example/api/v1/query-runs/33333333-3333-4333-8333-333333333333/feedback", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ version: "p1.2", rating: "NEEDS_ADJUSTMENT", target: { type: "METRIC", ref: "sales amount" }, category: "metric", correction: "<script>alert(1)</script>" }) }), env);
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({ feedback: { version: "p1.2", rating: "NEEDS_ADJUSTMENT", target: { type: "METRIC", ref: "sales amount" }, category: "metric" } });
+    expect(calls.some((sql) => sql.includes("correction_text"))).toBe(true);
+    expect(calls.some((sql) => sql.includes("QUERYMIND_DATA") || sql.includes("read_only_sql"))).toBe(false);
+  });
+
+  test("accepts the P1.2 positive one-click contract with a whole-answer target", async () => {
+    const { env } = feedbackEnv();
+    const response = await submitQueryFeedback(new Request("https://querymind.example/api/v1/query-runs/33333333-3333-4333-8333-333333333333/feedback", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ version: "p1.2", rating: "POSITIVE" }) }), env);
+    await expect(response.json()).resolves.toMatchObject({ feedback: { version: "p1.2", rating: "POSITIVE", target: { type: "WHOLE_ANSWER", ref: null } } });
+  });
+
+  test("rejects an invented evidence reference and failed runs without mutation", async () => {
+    const explainability = JSON.stringify({ version: "p1", understanding: { intent: "查詢", metrics: ["sales amount"], dimensions: [], filters: [] }, sources: { tables: [] }, explanation: { business: "計算", rawSqlAvailable: false }, summary: { headline: "完成" } });
+    const invalid = feedbackEnv("local-anonymous", explainability);
+    await expect(submitQueryFeedback(new Request("https://querymind.example/api/v1/query-runs/33333333-3333-4333-8333-333333333333/feedback", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ version: "p1.2", rating: "NEEDS_ADJUSTMENT", target: { type: "METRIC", ref: "employees.salary" }, correction: "不應該存在" }) }), invalid.env)).rejects.toMatchObject({ status: 400, code: "INVALID_FEEDBACK_TARGET" });
+    const failed = feedbackEnv("local-anonymous", explainability, "failed");
+    await expect(submitQueryFeedback(new Request("https://querymind.example/api/v1/query-runs/33333333-3333-4333-8333-333333333333/feedback", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ version: "p1.2", rating: "POSITIVE" }) }), failed.env)).rejects.toMatchObject({ status: 404, code: "QUERY_RUN_NOT_FOUND" });
   });
 });

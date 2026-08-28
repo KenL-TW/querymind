@@ -13,7 +13,9 @@ flowchart TD
   D --> DATA[(QUERYMIND_DATA D1)]
   W --> APP[(QUERYMIND_APP D1)]
   D --> E[Explainability and feedback]
-  E --> SPA
+  E --> F[Owner-only P1.2 feedback capture]
+  F --> APP
+  F --> SPA
   S --> R[Semantic Registry / P2-D suggestions]
   R --> H[Human edit → DRAFT only]
 ```
@@ -33,6 +35,6 @@ Semantic Registry and P2-D AI Suggestions live in `QUERYMIND_APP`. Suggestions r
 - The Authorized Catalog excludes unauthorized tables, columns, scope keys, and row predicates before model egress.
 - QueryPolicyEngine denies invalid/read-write/unauthorized SQL; LLM output never overrides it.
 - Explainability is generated from deterministic governed runtime state and SQL display remains capability-gated.
-- Feedback is owner-only and idempotent.
+- Feedback is owner-only, successful-query-run-only and idempotent. P1.2 validates evidence targets against the persisted Explainability envelope and stores only bounded untrusted correction text; submission never calls AI or executes business SQL.
 
 See [the governed baseline](../baselines/governed-query-baseline.md) for test-backed invariants and [the release manifest](../releases/manifests/p2-d-production.json) for production evidence.

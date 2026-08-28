@@ -1,5 +1,11 @@
 # QueryMind Cloudflare D1 + OpenAI 重構追蹤表
 
+## 2026-08-28: P1.2 Feedback & Trust Experience
+
+| ID | Status | Delivered | Verification / current state |
+|---|---|---|---|
+| P1.2 | In progress | Structured query-run-linked feedback capture is implemented as additive APP migration `0011`; P1 compatibility, evidence target validation, bounded correction text, retry-safe progressive disclosure, inline evidence actions, and audit metadata boundaries are covered in code/tests. No AI, SQL execution, semantic mutation, or P2-D suggestion mutation is introduced. | Local implementation tests currently pass; remaining gates are full regression, migration/preflight/manifest validation, explicit remote APP `0011` apply, Worker deployment, and public production smoke. Authenticated production UX remains operator-gated; P2-D manual closeout remains PENDING. |
+
 ## 2026-08-27: R14 Post-P2-D source-of-truth and reproducibility hardening
 
 | ID | Status | Delivered | Verification / current state |

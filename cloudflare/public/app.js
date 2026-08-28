@@ -164,19 +164,68 @@ function resultColumnLabel(column) {
 function table(headers, rows, className = "") { return `<div class="table-wrap"><table class="${className}"><thead><tr>${headers.map((head) => `<th>${esc(head)}</th>`).join("")}</tr></thead><tbody>${rows || `<tr><td colspan="${headers.length}" class="table-empty">目前沒有資料</td></tr>`}</tbody></table></div>`; }
 function button(label, options = {}) { return `<button class="button ${options.kind || "secondary"}" ${options.attrs || ""}>${options.icon ? icon(options.icon) : ""}${label}</button>`; }
 function status(text, tone = "neutral") { return `<span class="status ${tone}">${esc(text)}</span>`; }
-async function submitFeedback(runId, rating, category = null, comment = "") {
+const FEEDBACK_TARGET_LABELS = { WHOLE_ANSWER: "整體回答", INTENT: "問題理解", METRIC: "指標", DIMENSION: "維度", FILTER: "篩選條件", SOURCE: "資料來源", CALCULATION: "計算方式", PRESENTATION: "結果呈現" };
+const FEEDBACK_CATEGORY_LABELS = { interpretation: "問題理解不正確", metric: "指標定義不符合需求", dimension: "維度不正確", filter: "篩選條件不正確或遺漏", source: "資料來源不符合需求", calculation: "計算方式有問題", incomplete: "結果資料不完整", scope: "資料範圍不符合需求", presentation: "結果呈現需要改善", other: "其他" };
+function feedbackTargetOptions(explain, selected = "WHOLE_ANSWER::") {
+  const options = [{ type: "WHOLE_ANSWER", ref: "", label: FEEDBACK_TARGET_LABELS.WHOLE_ANSWER }];
+  const understanding = explain.understanding || {};
+  if (understanding.intent) options.push({ type: "INTENT", ref: understanding.intent, label: FEEDBACK_TARGET_LABELS.INTENT });
+  for (const metric of Array.isArray(understanding.metrics) ? understanding.metrics : []) options.push({ type: "METRIC", ref: metric, label: `${FEEDBACK_TARGET_LABELS.METRIC}：${metric}` });
+  for (const dimension of Array.isArray(understanding.dimensions) ? understanding.dimensions : []) options.push({ type: "DIMENSION", ref: dimension, label: `${FEEDBACK_TARGET_LABELS.DIMENSION}：${dimension}` });
+  for (const filter of Array.isArray(understanding.filters) ? understanding.filters : []) options.push({ type: "FILTER", ref: filter, label: `${FEEDBACK_TARGET_LABELS.FILTER}：${filter}` });
+  for (const source of Array.isArray(explain.sources?.tables) ? explain.sources.tables : []) if (source?.name) options.push({ type: "SOURCE", ref: source.name, label: `${FEEDBACK_TARGET_LABELS.SOURCE}：${source.label || source.name}` });
+  if (explain.explanation?.business) options.push({ type: "CALCULATION", ref: "calculation", label: FEEDBACK_TARGET_LABELS.CALCULATION });
+  if (explain.summary?.headline) options.push({ type: "PRESENTATION", ref: "result", label: FEEDBACK_TARGET_LABELS.PRESENTATION });
+  return options.map((option) => { const value = `${option.type}::${encodeURIComponent(option.ref)}`; return `<option value="${esc(value)}" ${value === selected ? "selected" : ""}>${esc(option.label)}</option>`; }).join("");
+}
+function feedbackCategoryOptions() { return Object.entries(FEEDBACK_CATEGORY_LABELS).map(([value, label]) => `<option value="${value}">${label}</option>`).join(""); }
+function feedbackTargetValue(type, ref = "") { return `${type}::${encodeURIComponent(ref)}`; }
+function parseFeedbackTarget(value) { const separator = value.indexOf("::"); const type = separator < 0 ? "WHOLE_ANSWER" : value.slice(0, separator); const encoded = separator < 0 ? "" : value.slice(separator + 2); return { type, ref: encoded ? decodeURIComponent(encoded) : null }; }
+function feedbackStatus(box, message, tone = "ok") {
+  let statusNode = box.querySelector("[data-feedback-status]");
+  if (!statusNode) { statusNode = document.createElement("small"); statusNode.dataset.feedbackStatus = "true"; box.append(statusNode); }
+  statusNode.className = `feedback-status ${tone}`; statusNode.textContent = message; statusNode.setAttribute("role", tone === "error" ? "alert" : "status");
+}
+async function submitFeedback(box) {
+  if (!box || box.dataset.feedbackState === "SUBMITTING" || box.dataset.feedbackState === "SUBMITTED") return;
+  const runId = box.dataset.feedbackBox;
+  const rating = box.dataset.feedbackRating || "NEEDS_ADJUSTMENT";
+  const targetValue = box.querySelector("[data-feedback-target]")?.value || feedbackTargetValue("WHOLE_ANSWER");
+  const target = parseFeedbackTarget(targetValue);
+  const category = box.querySelector("[data-feedback-category]")?.value || null;
+  const correction = box.querySelector("[data-feedback-correction]")?.value || "";
+  const comment = box.querySelector("[data-feedback-comment]")?.value || "";
+  if (rating === "NEEDS_ADJUSTMENT" && !category && target.type === "WHOLE_ANSWER" && !correction.trim() && !comment.trim()) { feedbackStatus(box, "請選擇需要調整的部分，或補充希望的調整方式。", "error"); return; }
+  box.dataset.feedbackState = "SUBMITTING";
+  box.querySelectorAll("button, select, textarea").forEach((control) => { control.disabled = true; });
+  feedbackStatus(box, "正在記錄回饋…");
   try {
-    await api(`/api/v1/query-runs/${encodeURIComponent(runId)}/feedback`, { method: "POST", body: JSON.stringify({ rating, category, comment }) });
-    const box = [...root.querySelectorAll("[data-feedback-box]")].find((item) => item.dataset.feedbackBox === runId);
-    if (box) { box.querySelectorAll("button").forEach((button) => { button.disabled = true; }); box.querySelector(".feedback-negative")?.setAttribute("hidden", ""); box.insertAdjacentHTML("beforeend", `<small class="feedback-thanks">感謝你的回饋。</small>`); }
+    await api(`/api/v1/query-runs/${encodeURIComponent(runId)}/feedback`, { method: "POST", body: JSON.stringify({ version: "p1.2", rating, target, category, comment, correction }) });
+    box.dataset.feedbackState = "SUBMITTED";
+    box.innerHTML = `<div class="feedback-complete" role="status"><span aria-hidden="true">✓</span><b>${rating === "POSITIVE" ? "已記錄，謝謝你的回饋。" : "已記錄這次調整建議。"}</b><small>這份回饋已與本次查詢連結，供後續品質檢視使用。</small></div>`;
     toast("回饋已記錄");
-  } catch (error) { toast(error.message, "error"); }
+  } catch (error) {
+    box.dataset.feedbackState = "ERROR";
+    box.querySelectorAll("button, select, textarea").forEach((control) => { control.disabled = false; });
+    feedbackStatus(box, error.message || "回饋送出失敗，請稍後再試。", "error");
+    let retry = box.querySelector("[data-feedback-retry]");
+    if (!retry) { retry = document.createElement("button"); retry.type = "button"; retry.className = "text-button feedback-retry"; retry.dataset.feedbackRetry = "true"; retry.textContent = "重試"; box.append(retry); }
+    // The retry control is created after the page has been bound. Keep a direct
+    // handler as a resilient fallback for browsers/extensions that stop
+    // delegated events at dynamically replaced nodes.
+    retry.onclick = () => { void submitFeedback(box); };
+    toast(error.message || "回饋送出失敗", "error");
+  }
 }
 root.addEventListener("click", (event) => {
+  const inline = event.target.closest?.("[data-feedback-inline]");
+  if (inline) { event.preventDefault(); const box = [...root.querySelectorAll("[data-feedback-box]")].find((item) => item.dataset.feedbackBox === inline.dataset.feedbackRun); if (!box) return; box.dataset.feedbackRating = "NEEDS_ADJUSTMENT"; box.dataset.feedbackState = "EXPANDED"; box.querySelector(".feedback-negative")?.removeAttribute("hidden"); const target = box.querySelector("[data-feedback-target]"); if (target) target.value = feedbackTargetValue(inline.dataset.feedbackTargetType, inline.dataset.feedbackTargetRef || ""); target?.focus(); return; }
   const rating = event.target.closest?.("[data-feedback-rating]");
-  if (rating) { event.preventDefault(); if (rating.dataset.feedbackRating === "negative") rating.closest("[data-feedback-box]")?.querySelector(".feedback-negative")?.removeAttribute("hidden"); else void submitFeedback(rating.dataset.feedbackRun, "positive"); return; }
+  if (rating) { event.preventDefault(); const box = rating.closest("[data-feedback-box]"); if (!box) return; box.dataset.feedbackRating = rating.dataset.feedbackRating === "positive" ? "POSITIVE" : "NEEDS_ADJUSTMENT"; if (box.dataset.feedbackRating === "NEEDS_ADJUSTMENT") { box.dataset.feedbackState = "EXPANDED"; box.querySelector(".feedback-negative")?.removeAttribute("hidden"); box.querySelector("[data-feedback-target]")?.focus(); } else void submitFeedback(box); return; }
   const submit = event.target.closest?.("[data-feedback-submit]");
-  if (submit) { event.preventDefault(); const box = submit.closest("[data-feedback-box]"); const category = box?.querySelector("[data-feedback-category]")?.value || ""; const comment = box?.querySelector("[data-feedback-comment]")?.value || ""; if (!category) { toast("請選擇改善類別", "error"); return; } void submitFeedback(submit.dataset.feedbackRun, "negative", category, comment); }
+  if (submit) { event.preventDefault(); void submitFeedback(submit.closest("[data-feedback-box]")); return; }
+  const retry = event.target.closest?.("[data-feedback-retry]");
+  if (retry) { event.preventDefault(); void submitFeedback(retry.closest("[data-feedback-box]")); }
 });
 
 async function renderDashboard() {
@@ -210,10 +259,14 @@ function explainabilityPanel(result, key) {
   const sources = explain.sources || {};
   const governance = sources.governance || {};
   const summary = explain.summary || {};
-  const list = (values, empty = "—") => Array.isArray(values) && values.length ? values.map((value) => `<li>${esc(value)}</li>`).join("") : `<li class="muted">${empty}</li>`;
-  const feedback = explain.feedback?.supported && explain.feedback.queryRunId ? `<div class="query-feedback" data-feedback-box="${esc(explain.feedback.queryRunId)}"><div><b>這次回答有幫助嗎？</b><small>回饋只會綁定本次查詢，且不會改變資料權限。</small></div><div class="feedback-actions"><button class="button compact" data-feedback-rating="positive" data-feedback-run="${esc(explain.feedback.queryRunId)}">有幫助</button><button class="button compact" data-feedback-rating="negative" data-feedback-run="${esc(explain.feedback.queryRunId)}">需要改善</button></div><div class="feedback-negative" hidden><label>改善類別<select data-feedback-category><option value="">請選擇</option><option value="interpretation">問題理解</option><option value="source">資料來源</option><option value="calculation">計算方式</option><option value="incomplete">結果不完整</option><option value="scope">資料範圍</option><option value="other">其他</option></select></label><textarea data-feedback-comment maxlength="800" placeholder="補充說明（選填，最多 800 字）"></textarea><button class="button primary compact" data-feedback-submit data-feedback-run="${esc(explain.feedback.queryRunId)}">送出回饋</button></div></div>` : "";
+  const list = (values, empty = "—", targetType = "") => Array.isArray(values) && values.length ? values.map((value) => `<li class="explain-evidence-item"><span>${esc(value)}</span>${targetType && explain.feedback?.supported ? `<button type="button" class="evidence-feedback" data-feedback-inline data-feedback-run="${esc(explain.feedback.queryRunId)}" data-feedback-target-type="${esc(targetType)}" data-feedback-target-ref="${esc(value)}" aria-label="針對${esc(value)}提出調整">調整</button>` : ""}</li>`).join("") : `<li class="muted">${empty}</li>`;
+  const feedbackId = explain.feedback?.supported ? explain.feedback.queryRunId : "";
+  const feedback = feedbackId ? `<div class="query-feedback" data-feedback-box="${esc(feedbackId)}" data-feedback-state="IDLE"><div class="feedback-intro"><b>這份結果符合你的需求嗎？</b><small>回饋只會與本次查詢連結，不會改變資料權限。</small></div><div class="feedback-actions"><button type="button" class="button compact" data-feedback-rating="positive" aria-label="符合需求">✓ 符合需求</button><button type="button" class="button compact" data-feedback-rating="negative" aria-label="調整這份結果">調整一下</button></div><div class="feedback-negative" hidden><label>哪一部分需要調整？<select data-feedback-target aria-label="選擇需要調整的部分">${feedbackTargetOptions(explain)}</select></label><label>問題類型（選填）<select data-feedback-category aria-label="選擇問題類型"><option value="">未指定</option>${feedbackCategoryOptions()}</select></label><label class="feedback-correction-field">你希望怎麼調整？（選填）<textarea data-feedback-correction maxlength="1000" placeholder="例如：我想看排除取消訂單後的銷售額"></textarea></label><button type="button" class="button primary compact" data-feedback-submit>送出回饋</button></div></div>` : "";
   const explanationSql = typeof explain.explanation?.sql === "string" && explain.explanation.sql.trim() ? explain.explanation.sql.trim() : undefined;
-  return `<section class="query-explainability"><header class="explain-head"><div><span class="result-kicker">查詢說明</span><b>${esc(summary.headline || "結果摘要")}</b></div><span class="governance-badge">${icon("shield")}已套用治理</span></header><div class="explain-grid"><article><span class="explain-label">Query Understanding</span><h4>${esc(understanding.intent || "資料查詢")}</h4><dl class="explain-facts"><div><dt>指標</dt><dd><ul>${list(understanding.metrics)}</ul></dd></div><div><dt>維度</dt><dd><ul>${list(understanding.dimensions)}</ul></dd></div><div><dt>條件</dt><dd><ul>${list(understanding.filters)}</ul></dd></div><div><dt>時間</dt><dd>${esc(understanding.timeRange || "未指定")}</dd></div></dl></article><article><span class="explain-label">Data Sources / Governance</span><ul class="source-list">${(sources.tables || []).map((source) => `<li><b>${esc(source.label || source.name)}</b><small>${esc(source.name)}</small></li>`).join("") || "<li class=muted>已授權資料來源</li>"}</ul><div class="governance-chips"><span>${governance.scopeApplied ? "範圍已套用" : "範圍未指定"}</span><span>${governance.rowPolicyApplied ? "資料列規則已套用" : "資料列規則已檢查"}</span><span>${governance.columnPolicyApplied ? "欄位權限已檢查" : "欄位權限未指定"}</span><span>${governance.dlpApplied ? "敏感欄位已遮罩" : "DLP 未套用"}</span></div></article><article><span class="explain-label">How calculated</span><p>${esc(explain.explanation?.business || "此查詢已完成唯讀驗證與結果遮罩。")}</p><ul class="summary-list">${list(summary.highlights)}</ul>${summary.caveats?.length ? `<div class="explain-caveats"><ul>${list(summary.caveats)}</ul></div>` : ""}</article></div>${explanationSql && explain.explanation?.rawSqlAvailable ? `<details class="sql-disclosure" open><summary>檢視已驗證 SQL</summary><pre>${esc(explanationSql)}</pre></details>` : ""}${feedback}</section>`;
+  const sourceRows = (sources.tables || []).map((source) => `<li class="explain-evidence-item"><span><b>${esc(source.label || source.name)}</b><small>${esc(source.name)}</small></span>${feedbackId ? `<button type="button" class="evidence-feedback" data-feedback-inline data-feedback-run="${esc(feedbackId)}" data-feedback-target-type="SOURCE" data-feedback-target-ref="${esc(source.name)}" aria-label="針對${esc(source.label || source.name)}提出調整">調整</button>` : ""}</li>`).join("") || "<li class=muted>已授權資料來源</li>";
+  const calculationAction = feedbackId && explain.explanation?.business ? `<button type="button" class="evidence-feedback" data-feedback-inline data-feedback-run="${esc(feedbackId)}" data-feedback-target-type="CALCULATION" data-feedback-target-ref="calculation" aria-label="針對計算方式提出調整">調整計算方式</button>` : "";
+  const intentAction = feedbackId && understanding.intent ? `<button type="button" class="evidence-feedback" data-feedback-inline data-feedback-run="${esc(feedbackId)}" data-feedback-target-type="INTENT" data-feedback-target-ref="${esc(understanding.intent)}" aria-label="針對問題理解提出調整">調整理解</button>` : "";
+  return `<section class="query-explainability"><header class="explain-head"><div><span class="result-kicker">查詢說明</span><b>${esc(summary.headline || "結果摘要")}</b></div><span class="governance-badge">${icon("shield")}已套用治理</span></header><div class="explain-grid"><article><div class="explain-calc-head"><span class="explain-label">Query Understanding</span>${intentAction}</div><h4>${esc(understanding.intent || "資料查詢")}</h4><dl class="explain-facts"><div><dt>指標</dt><dd><ul>${list(understanding.metrics, "—", "METRIC")}</ul></dd></div><div><dt>維度</dt><dd><ul>${list(understanding.dimensions, "—", "DIMENSION")}</ul></dd></div><div><dt>條件</dt><dd><ul>${list(understanding.filters, "—", "FILTER")}</ul></dd></div><div><dt>時間</dt><dd>${esc(understanding.timeRange || "未指定")}</dd></div></dl></article><article><span class="explain-label">Data Sources / Governance</span><ul class="source-list">${sourceRows}</ul><div class="governance-chips"><span>${governance.scopeApplied ? "範圍已套用" : "範圍未指定"}</span><span>${governance.rowPolicyApplied ? "資料列規則已套用" : "資料列規則已檢查"}</span><span>${governance.columnPolicyApplied ? "欄位權限已檢查" : "欄位權限未指定"}</span><span>${governance.dlpApplied ? "敏感欄位已遮罩" : "DLP 未套用"}</span></div></article><article><div class="explain-calc-head"><span class="explain-label">How calculated</span>${calculationAction}</div><p>${esc(explain.explanation?.business || "此查詢已完成唯讀驗證與結果遮罩。")}</p><ul class="summary-list">${list(summary.highlights)}</ul>${summary.caveats?.length ? `<div class="explain-caveats"><ul>${list(summary.caveats)}</ul></div>` : ""}</article></div>${explanationSql && explain.explanation?.rawSqlAvailable ? `<details class="sql-disclosure" open><summary>檢視已驗證 SQL</summary><pre>${esc(explanationSql)}</pre></details>` : ""}${feedback}</section>`;
 }
 
 function resultPanel(result, key) {
@@ -728,6 +781,10 @@ function bindSemanticPage() {
   root.querySelectorAll("[data-review-semantic]").forEach((button) => button.addEventListener("click", () => semanticReviewDialog(button.dataset.reviewSemantic, button.dataset.assetId, button.dataset.revisionId)));
 }
 function bindPage() { bindSemanticPage();
+  // Feedback controls are rendered as part of result explainability and may be
+  // replaced during a retry/error transition. Direct listeners complement the
+  // root delegation above and keep the capture-only UX reliable after a rerender.
+  root.querySelectorAll("[data-feedback-submit]").forEach((button) => button.addEventListener("click", (event) => { event.preventDefault(); void submitFeedback(button.closest("[data-feedback-box]")); }));
   root.querySelectorAll("[data-prompt]").forEach((button) => button.addEventListener("click", () => go("chat", { pendingPrompt: button.dataset.prompt, resetSession: true })));
   root.querySelectorAll("[data-session]").forEach((button) => button.addEventListener("click", () => { state.activeSession = button.dataset.session; state.messages = []; state.result = null; void render(); }));
   root.querySelectorAll("[data-session-action]").forEach((button) => button.addEventListener("click", (event) => { event.stopPropagation(); void sessionAction(button.dataset.sessionAction, button.dataset.sessionId, button.dataset.sessionValue); }));

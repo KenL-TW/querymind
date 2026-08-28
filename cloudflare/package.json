@@ -17,6 +17,7 @@
     "test:all": "playwright test",
     "migration:check": "node scripts/check-migration-immutability.mjs",
     "release:manifest:check": "node scripts/release-manifest.mjs",
+    "release:manifest:p12": "node scripts/release-manifest.mjs ../docs/releases/manifests/p1.2-feedback-trust.json",
     "release:preflight": "node scripts/release-preflight.mjs",
     "smoke:production": "node scripts/smoke-production.mjs",
     "deploy:dry-run": "wrangler deploy --config wrangler.production.jsonc --dry-run",

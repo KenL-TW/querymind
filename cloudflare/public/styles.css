@@ -3136,11 +3136,23 @@ td select,
 .query-feedback { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; margin: 14px 18px 18px; padding: 12px; border-radius: 10px; background: var(--surface-muted, #f2f5f8); }
 .query-feedback b, .query-feedback small { display: block; }
 .query-feedback small { margin-top: 3px; color: var(--muted, #657386); font-size: 11px; }
-.feedback-actions { display: flex; gap: 7px; }
-.feedback-negative { flex-basis: 100%; display: grid; grid-template-columns: 180px minmax(0, 1fr) auto; gap: 8px; align-items: end; }
-.feedback-negative textarea { min-height: 38px; resize: vertical; }
-.feedback-thanks { color: var(--success, #287a55) !important; }
-@media (max-width: 860px) { .explain-grid { grid-template-columns: 1fr; } .feedback-negative { grid-template-columns: 1fr; } }
+.feedback-actions { display: flex; flex-wrap: wrap; gap: 7px; }
+.feedback-negative { flex-basis: 100%; display: grid; grid-template-columns: minmax(160px, .8fr) minmax(160px, .8fr) minmax(220px, 1.4fr) auto; gap: 8px; align-items: end; }
+.feedback-negative label { display: grid; gap: 4px; color: var(--muted, #657386); font-size: 11px; }
+.feedback-negative select, .feedback-negative textarea { width: 100%; min-height: 38px; resize: vertical; }
+.feedback-negative textarea { min-height: 58px; }
+.feedback-status { flex-basis: 100%; color: var(--muted, #657386); }
+.feedback-status.error { color: var(--danger, #a33a3a); }
+.feedback-complete { display: grid; gap: 2px; width: 100%; color: var(--success, #287a55); }
+.feedback-complete span { font-size: 16px; font-weight: 700; }
+.feedback-complete small { color: var(--muted, #657386); }
+.feedback-retry { justify-self: start; }
+.explain-evidence-item { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; }
+.explain-evidence-item > span { min-width: 0; overflow-wrap: anywhere; }
+.evidence-feedback { border: 0; padding: 2px 4px; color: var(--blue-700, #2468a8); background: transparent; font-size: 11px; white-space: nowrap; cursor: pointer; }
+.evidence-feedback:hover, .evidence-feedback:focus-visible { text-decoration: underline; }
+.explain-calc-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+@media (max-width: 860px) { .explain-grid { grid-template-columns: 1fr; } .feedback-negative { grid-template-columns: 1fr; } .query-feedback { margin-inline: 10px; } }
 
 /* P2-C semantic governance is a design-time surface: metadata only, no result data or SQL. */
 .semantic-registry,

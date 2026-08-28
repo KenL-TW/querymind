@@ -8,7 +8,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const contract = JSON.parse(readFileSync(path.join(root, "production-runtime-contract.json"), "utf8"));
 const configPath = path.join(root, "wrangler.production.jsonc");
 const config = JSON.parse(readFileSync(configPath, "utf8"));
-const requiredMigrations = Array.from({ length: 10 }, (_, index) => String(index + 1).padStart(4, "0"));
+const requiredMigrations = Array.from({ length: 11 }, (_, index) => String(index + 1).padStart(4, "0"));
 
 function assert(condition, message) { if (!condition) throw new Error(`Production preflight failed: ${message}`); }
 function git(...args) { return execFileSync("git", args, { cwd: path.join(root, ".."), encoding: "utf8" }).trim(); }
@@ -29,6 +29,7 @@ const appMigrationFiles = readdirSync(path.join(root, "migrations", "app"));
 for (const migration of requiredMigrations) assert(appMigrationFiles.some((name) => name.startsWith(`${migration}_`) && name.endsWith(".sql")), `application migration ${migration} is missing`);
 assert(existsSync(path.join(root, "migrations", "data", "0001_initial_business_schema.sql")), "data migration 0001 is missing");
 loadReleaseManifest();
+loadReleaseManifest(path.join(root, "..", "docs", "releases", "manifests", "p1.2-feedback-trust.json"));
 assert(git("status", "--porcelain") === "", "working tree is not clean; commit or explicitly reconcile all changes before release");
 assert(git("branch", "--show-current") === "main", "release must run from main");
 console.log(`Production preflight passed for ${contract.workerName}.`);

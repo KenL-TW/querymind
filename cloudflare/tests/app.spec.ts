@@ -462,4 +462,55 @@ test.describe("QueryMind product workspace", () => {
     await page.screenshot({ path: path.join(evidenceDir, "querymind-semantic-registry-mobile.png"), fullPage: false });
     expect(consoleIssues, consoleIssues.join("\n")).toEqual([]);
   });
+
+  test("P1.2 feedback uses progressive evidence targets and preserves correction on retry", async ({ page }) => {
+    test.skip(!allowMutatingE2E, "Set QUERYMIND_ALLOW_MUTATING_E2E=true before mutating a remote deployment.");
+    const runId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+    const insightId = "p12-feedback-fixture";
+    const createdSessionIds: string[] = [];
+    let feedbackCalls = 0;
+    await loginUi(page);
+    await page.route("**/api/v1/insights**", async (route) => {
+      if (route.request().method() !== "GET") return route.continue();
+      return route.fulfill({ contentType: "application/json", body: JSON.stringify({ insights: [{ id: insightId, title: "P1.2 feedback fixture", description: "deterministic evidence feedback", prompt: "請依商品列出銷售額", sql: "SELECT products.name, SUM(order_items.subtotal) AS sales_revenue FROM products JOIN order_items ON order_items.product_id = products.id GROUP BY products.name", chartType: "table", isFavorite: false, createdAt: "2026-08-28T00:00:00.000Z", updatedAt: "2026-08-28T00:00:00.000Z" }] }) });
+    });
+    await page.route("**/api/v1/query", async (route) => {
+      if (route.request().method() !== "POST") return route.continue();
+      return route.fulfill({ contentType: "application/json", body: JSON.stringify({ rows: [{ product_name: "QueryBook Air", sales_revenue: 29990 }], rowCount: 1, rowCap: 100, maskedColumns: [], durationMs: 1, queryRunId: runId, sql: "SELECT products.name, SUM(order_items.subtotal) AS sales_revenue FROM products JOIN order_items ON order_items.product_id = products.id GROUP BY products.name", explainability: { version: "p1", queryRunId: runId, understanding: { intent: "比較與彙總資料", metrics: ["sales amount"], dimensions: ["product"], filters: [], timeRange: null, ranking: null, assumptions: [], confidence: "high" }, sources: { tables: [{ name: "products", label: "Products" }, { name: "order_items", label: "Order Items" }], governance: { scopeApplied: true, rowPolicyApplied: false, columnPolicyApplied: true, dlpApplied: true }, result: { rowCount: 1, truncated: false } }, explanation: { business: "指標：sales amount；依商品分組", rawSqlAvailable: true, sql: "SELECT products.name, SUM(order_items.subtotal) AS sales_revenue FROM products JOIN order_items ON order_items.product_id = products.id GROUP BY products.name" }, summary: { headline: "查詢完成，共 1 筆結果", highlights: [], caveats: [] }, feedback: { supported: true, queryRunId: runId } } }) });
+    });
+    await page.route("**/api/v1/query-runs/*/feedback", async (route) => {
+      feedbackCalls += 1;
+      if (feedbackCalls === 1) return route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: "TEMPORARY", message: "暫時無法記錄，請重試。" }) });
+      return route.fulfill({ contentType: "application/json", body: JSON.stringify({ ok: true, feedback: { id: "feedback-fixture", version: "p1.2", rating: "NEEDS_ADJUSTMENT", target: { type: "METRIC", ref: "sales amount" }, category: "metric", submittedAt: "2026-08-28T00:00:00.000Z" } }) });
+    });
+    try {
+      await page.locator('[data-page="insights"]').first().click();
+      const sessionCreated = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/v1/sessions" && response.request().method() === "POST", { timeout: 7_000 });
+      await page.locator(`[data-run-insight="${insightId}"]`).click();
+      const sessionResponse = await sessionCreated;
+      await expectOk(sessionResponse, "create P1.2 fixture session");
+      createdSessionIds.push(((await sessionResponse.json()) as { session: { id: string } }).session.id);
+      const explanation = page.locator(".query-explainability").last();
+      await expect(explanation.getByText("這份結果符合你的需求嗎？", { exact: true })).toBeVisible();
+      await expect(explanation.getByRole("button", { name: "符合需求" })).toBeVisible();
+      await expect(explanation.getByRole("button", { name: "調整這份結果" })).toBeVisible();
+      await explanation.getByRole("button", { name: /針對sales amount提出調整/ }).click();
+      const feedback = explanation.locator("[data-feedback-box]");
+      await expect(feedback.locator(".feedback-negative")).toBeVisible();
+      await expect(feedback.locator("[data-feedback-target]")).toHaveValue(/METRIC::/u);
+      await feedback.locator("[data-feedback-correction]").fill("這是 <script>alert(1)</script> 的修正");
+      await feedback.getByRole("button", { name: "送出回饋" }).click();
+      await expect(feedback).toContainText("暫時無法記錄");
+      await expect(feedback.locator("[data-feedback-correction]")).toHaveValue("這是 <script>alert(1)</script> 的修正");
+      await feedback.getByRole("button", { name: "重試" }).click();
+      await expect(feedback.locator(".feedback-complete")).toContainText("已記錄這次調整建議");
+      expect(feedbackCalls).toBe(2);
+    } finally {
+      await page.unroute("**/api/v1/insights**");
+      await page.unroute("**/api/v1/query");
+      await page.unroute("**/api/v1/query-runs/*/feedback");
+      const api = page.context().request;
+      for (const id of createdSessionIds) await expectOk(await api.delete(absoluteUrl(`/api/v1/sessions/${id}`), { timeout: 5_000 }), "remove P1.2 fixture session");
+    }
+  });
 });

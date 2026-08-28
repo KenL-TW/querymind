@@ -21,9 +21,16 @@ QueryMind is a governed AI data-query application. Production is the Cloudflare 
 
 - Production Worker: `5c55b16b-4a02-4fb4-8906-687f1b6387ab`
 - Rollback Worker: `31693496-e2b8-4110-92d6-40f61035f182`
-- APP migrations: `0001`–`0010`; DATA: `0001`
+- APP migrations: `0001`–`0011`; DATA: `0001`
 - Current semantic state: registry version 0; no assets, revisions, reviews, or suggestion runs
 - Release evidence: [P2-D manifest](releases/manifests/p2-d-production.json)
+- P1.2 release evidence: [Feedback & Trust manifest](releases/manifests/p1.2-feedback-trust.json)
+
+P1.2 feedback is a query-run-linked capture boundary. It validates evidence
+targets against persisted Explainability, preserves owner-only successful-run
+and unique upsert rules, and stores bounded untrusted corrections. It never
+calls an AI provider, executes business SQL, changes policy, or mutates
+Semantic Registry/P2-D state.
 
 ## Local and release workflow
 
