@@ -19,7 +19,7 @@
     "release:manifest:check": "node scripts/release-manifest.mjs",
     "release:preflight": "node scripts/release-preflight.mjs",
     "smoke:production": "node scripts/smoke-production.mjs",
-    "deploy:dry-run": "wrangler deploy --dry-run",
+    "deploy:dry-run": "wrangler deploy --config wrangler.production.jsonc --dry-run",
     "deploy:production": "node scripts/deploy-production.mjs"
   },
   "devDependencies": {
