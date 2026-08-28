@@ -1,0 +1,3 @@
+# Keep release-critical artifacts byte-stable across Windows and Unix checkouts.
+cloudflare/migrations/**/*.sql text eol=lf
+cloudflare/src/worker-configuration.d.ts text eol=lf
