@@ -3,6 +3,7 @@
 .env.*
 !.env.local.example
 !.env.production.example
+!infra/aws-demo/.env.aws-demo.example
 **/.dev.vars
 **/.dev.vars.*
 !**/.dev.vars.example
