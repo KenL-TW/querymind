@@ -1,0 +1,26 @@
+{
+  "releaseId": "querymind-p1.2-feedback-trust-2026-08",
+  "phase": "P1.2",
+  "gitSha": "cac7a8efda7bbb26c6a048ed373e3ea78ee50c97",
+  "workerVersionId": "5c55b16b-4a02-4fb4-8906-687f1b6387ab",
+  "previousWorkerVersionId": "5c55b16b-4a02-4fb4-8906-687f1b6387ab",
+  "appMigration": "0011",
+  "dataMigration": "0001",
+  "schemaSnapshotId": "9fc08cbf8ee017c5f6041f7eaa6b7a0b0411b185f4d7e503e0ca47ecdc3b49d3",
+  "policyVersion": "p0-governed-query-safety-core-v1",
+  "policyCount": 72,
+  "semanticRegistryVersion": 0,
+  "semanticAssets": 0,
+  "semanticRevisions": 0,
+  "semanticReviews": 0,
+  "tests": {
+    "unit": { "passed": 97, "total": 97 },
+    "e2e": { "passed": 20, "total": 20 },
+    "full": { "passed": 116, "total": 117 }
+  },
+  "environment": "production",
+  "aiMockMode": false,
+  "manualAuthenticatedUxSmoke": "NOT_EXECUTED_BY_DESIGN",
+  "releasedAt": "2026-08-28T13:40:00.000Z",
+  "rollbackWorker": "5c55b16b-4a02-4fb4-8906-687f1b6387ab"
+}
