@@ -2,7 +2,7 @@
 
 ## Release boundary
 
-Production is Worker `querymind` at `https://querymind.digitalaaronl.workers.dev`. The current verified Worker is `5c55b16b-4a02-4fb4-8906-687f1b6387ab`; the immediate rollback Worker is `31693496-e2b8-4110-92d6-40f61035f182`.
+Production is Worker `querymind` at `https://querymind.digitalaaronl.workers.dev`. The current verified Worker is `24622697-5acd-48ef-bbc8-58016589e129`; the immediate rollback Worker is `0adc14e9-6e86-4bbf-93bf-fe476c8f20e4`.
 
 The Worker runs a static SPA plus two D1 bindings. Production AI uses Cloudflare AI Gateway `querymind-prod` with OpenAI BYOK alias `production`. Keys remain in Cloudflare; never request, print, commit, or pass one on a command line.
 
@@ -27,7 +27,7 @@ The Worker runs a static SPA plus two D1 bindings. Production AI uses Cloudflare
 
 ## Migration is separate
 
-Migration is never part of `deploy:production`. For a release requiring a reviewed migration, follow the Cloudflare D1 confirmation flow separately and record a backup/checkpoint. Current Production is already APP `0001`–`0010`, DATA `0001`; this hardening release has **no migration**.
+Migration is never part of `deploy:production`. For a release requiring a reviewed migration, follow the Cloudflare D1 confirmation flow separately and record a backup/checkpoint. Current Production is APP `0001`–`0012`, DATA `0001`; P2-E migration `0012` is applied and no migration is pending.
 
 Do not roll back a forward D1 migration just because a Worker rollback is needed.
 

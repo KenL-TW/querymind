@@ -35,24 +35,27 @@ Chat, Direct Query, P0 QueryPolicyEngine, or P2-F runtime semantic injection.
 | Frontend syntax | PASS |
 | APP/DATA disposable migration rehearsal | PASS; APP `0001`–`0012`, DATA `0001` |
 | Migration immutability | PASS; protected `0006`–`0012` hashes |
-| Wrangler migration parser rehearsal | PASS; all 19 P2-E statements split and applied locally with `d1 migrations apply` |
+| Wrangler migration parser rehearsal | PASS; all 21 P2-E statements split and applied locally with `d1 migrations apply` |
 | P2-E governance API tests | PASS; 2/2 |
 | Full product/security/UI regression | PASS; 119/119 |
 | Fresh clone | PASS; `npm ci` (0 vulnerabilities), check, migration rehearsal, and 119/119 |
 
-## Production guardrails and next operation
+## Production verification
 
-The first production migration attempt was rejected before creating any P2-E
-tables (`SQLITE_ERROR: incomplete input`). Read-only inspection confirmed zero
-new P2-E tables. The cause was Wrangler's SQL splitter treating multiple
-trigger `CASE` expressions as one compound statement; the trigger expressions
-are now equivalent `IIF` expressions and a clean local `d1 migrations apply`
-rehearsal passes. The corrected commit must pass CI before retrying production.
+The first two production migration attempts were rejected before creating any
+P2-E tables (`SQLITE_ERROR: incomplete input`). Read-only inspection confirmed
+zero new P2-E tables after each failure. The cause was Wrangler's SQL splitter
+treating trigger `CASE` expressions as one compound statement. All trigger
+conditionals are now equivalent `IIF` expressions; a clean local `d1 migrations
+apply` rehearsal passes, and GitHub Actions run `33319658388` passed.
 
-Before production release, apply only APP migration `0012` to the existing
-production APP D1, deploy with production variables preserved, verify public
-health and anonymous denial, and then perform the operator-owned authenticated
-governance smoke using existing human accounts.
+Production APP migration `0012` was applied successfully and a read-only check
+confirmed all eight P2-E governance tables with no pending migrations. Worker
+version `24622697-5acd-48ef-bbc8-58016589e129` was deployed with production
+variables preserved (`--keep-vars`). Public `/`, `/health`, and anonymous
+protected-endpoint smoke passed. Authenticated governance smoke remains an
+operator-owned manual step using an existing human session; no credential was
+stored or used by the release script.
 
 Rollback is Worker-only. Do not attempt to roll back or edit the forward-only
 APP migration; keep a pre-migration recovery export per the production runbook.
