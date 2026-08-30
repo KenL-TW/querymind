@@ -2,6 +2,26 @@ import { requireBrowserSession, requireCapability, requireUser } from "../lib/au
 import { auditSemantic } from "../lib/audit";
 import { HttpError, json, readJson } from "../lib/http";
 import { objectBody, optionalText, page } from "../lib/product";
+import { authorizedSchemaCatalog } from "../lib/schema-catalog";
+import { resolveEffectiveScope } from "../lib/scope";
+import {
+  approveSemanticRevision,
+  createGovernancePolicy,
+  createSemanticAuthority,
+  emergencyPublishSemanticRevision,
+  governSemanticRuntime,
+  listGovernanceConfig,
+  loadGovernanceAsset,
+  loadGovernanceRevision,
+  loadPublication,
+  requireReady,
+  SEMANTIC_RACI_ROLES,
+  SEMANTIC_RISK_CLASSES,
+  SemanticGovernanceError,
+  validateSemanticApprovalReadiness,
+  type AuthorizedSemanticCatalog,
+  type SemanticGovernanceAction,
+} from "../lib/semantic-governance";
 import {
   assertPinnedDependencies,
   assertSemanticCatalogReferences,
@@ -124,6 +144,13 @@ interface ReviewRow {
 
 function semanticError(error: unknown): never {
   if (error instanceof HttpError) throw error;
+  if (error instanceof SemanticGovernanceError) {
+    const status = error.code === "RBAC_FORBIDDEN" || error.code === "SEMANTIC_AUTHORITY_FORBIDDEN" || error.code === "SEMANTIC_SOURCE_NOT_AUTHORIZED" ? 403
+      : error.code === "SEMANTIC_ASSET_NOT_FOUND" || error.code === "SEMANTIC_REVISION_NOT_FOUND" || error.code === "SEMANTIC_PUBLICATION_NOT_FOUND" ? 404
+        : error.code.includes("CONFLICT") || error.code.includes("REQUIRED") || error.code.includes("IMMUTABLE") || error.code.includes("STALE") || error.code.includes("NOT_CONFIGURED") ? 409
+          : 400;
+    throw new HttpError(status, error.code, error.message);
+  }
   if (error instanceof SemanticValidationError) throw new HttpError(400, "SEMANTIC_VALIDATION_ERROR", "Semantic input is invalid.");
   if (error instanceof SemanticRepositoryError) {
     const status = error.code === "SEMANTIC_ASSET_NOT_FOUND" || error.code === "SEMANTIC_REVISION_NOT_FOUND" ? 404
@@ -231,6 +258,40 @@ function escapeLike(value: string): string {
 
 function aliasInputs(value: unknown): Array<{ alias: string; locale?: string }> {
   return validateAliases(value).map((alias) => ({ alias: alias.alias, locale: alias.locale }));
+}
+
+function booleanField(value: unknown, field: string): boolean {
+  if (typeof value !== "boolean") throw new HttpError(400, "SEMANTIC_GOVERNANCE_INVALID", `${field} must be a boolean.`);
+  return value;
+}
+
+function integerField(value: unknown, field: string, minimum: number, maximum: number): number {
+  if (!Number.isInteger(value) || Number(value) < minimum || Number(value) > maximum) throw new HttpError(400, "SEMANTIC_GOVERNANCE_INVALID", `${field} must be an integer between ${minimum} and ${maximum}.`);
+  return Number(value);
+}
+
+function governanceScopeKind(value: unknown): "DOMAIN" | "ASSET" {
+  if (value !== "DOMAIN" && value !== "ASSET") throw new HttpError(400, "SEMANTIC_GOVERNANCE_INVALID", "scopeKind must be DOMAIN or ASSET.");
+  return value;
+}
+
+function governanceCatalog(value: Awaited<ReturnType<typeof authorizedSchemaCatalog>>): AuthorizedSemanticCatalog {
+  return {
+    schemaSnapshotId: value.schemaSnapshotId,
+    tables: new Set(value.tables.map((table) => table.name.toLowerCase())),
+    columns: new Set(value.tables.flatMap((table) => table.columns.map((column) => `${table.name.toLowerCase()}\u0000${column.name.toLowerCase()}`))),
+  };
+}
+
+async function approvalReadinessContext(env: Env, user: Awaited<ReturnType<typeof requireUser>>, assetId: string, revisionId: string, action: SemanticGovernanceAction) {
+  // Resolve EffectiveScope before obtaining any catalog evidence. The
+  // governance validator receives only this authorized metadata projection.
+  const scope = await resolveEffectiveScope(env, user);
+  const catalog = governanceCatalog(await authorizedSchemaCatalog(env, scope));
+  const asset = await loadGovernanceAsset(env.QUERYMIND_APP, assetId);
+  const revision = await loadGovernanceRevision(env.QUERYMIND_APP, asset.assetId, revisionId);
+  const readiness = await validateSemanticApprovalReadiness(env.QUERYMIND_APP, { actor: user, asset, revision, action, authorizedCatalog: catalog });
+  return { asset, revision, readiness };
 }
 
 async function loadAsset(database: D1Database, assetIdValue: string): Promise<AssetRow> {
@@ -436,5 +497,130 @@ export async function listSemanticReviews(request: Request, env: Env, assetId: s
     const limit = page(new URL(request.url).searchParams.get("limit"), 50, LIST_LIMIT);
     const rows = (await env.QUERYMIND_APP.prepare("SELECT review_id, revision_id, action, reviewer_user_id, comment, created_at FROM semantic_reviews WHERE revision_id = ? ORDER BY created_at DESC LIMIT ?").bind(revision.revision_id, limit).all<ReviewRow>()).results ?? [];
     return json({ assetId: asset.asset_id, revisionId: revision.revision_id, items: rows.map((row) => ({ reviewId: row.review_id, revisionId: row.revision_id, action: row.action, reviewerUserId: row.reviewer_user_id, comment: row.comment, createdAt: row.created_at })) });
+  });
+}
+
+/** P2-E: a governance administrator configures policy without receiving approval authority. */
+export async function semanticGovernanceConfig(request: Request, env: Env): Promise<Response> {
+  return governed(async () => {
+    const user = await requireUser(request, env);
+    requireBrowserSession(user);
+    requireCapability(user, "manage_semantic_governance");
+    if (request.method === "GET") return json(await listGovernanceConfig(env.QUERYMIND_APP));
+    const body = await semanticBody(request, ["scopeKind", "domain", "assetId", "riskClass", "requiredApprovals", "allowProposerSelfApproval", "allowEmergencyPublication", "postReviewDueHours"]);
+    const scopeKind = governanceScopeKind(body.scopeKind);
+    const assetId = scopeKind === "ASSET" ? validateOpaqueId(body.assetId, "assetId") : undefined;
+    const domain = optionalText(body.domain, "domain", SEMANTIC_LIMITS.domain) ?? "";
+    if (scopeKind === "ASSET") {
+      const asset = await loadGovernanceAsset(env.QUERYMIND_APP, assetId!);
+      if (domain && domain !== asset.domain) throw new HttpError(400, "SEMANTIC_GOVERNANCE_INVALID", "asset policy domain must match the semantic asset domain.");
+    }
+    const riskClass = typeof body.riskClass === "string" && SEMANTIC_RISK_CLASSES.includes(body.riskClass as (typeof SEMANTIC_RISK_CLASSES)[number]) ? body.riskClass as (typeof SEMANTIC_RISK_CLASSES)[number] : (() => { throw new HttpError(400, "SEMANTIC_GOVERNANCE_INVALID", "riskClass is invalid."); })();
+    const result = await createGovernancePolicy(env.QUERYMIND_APP, {
+      actorId: user.id, scopeKind, domain: scopeKind === "ASSET" ? (await loadGovernanceAsset(env.QUERYMIND_APP, assetId!)).domain : domain, assetId,
+      riskClass, requiredApprovals: integerField(body.requiredApprovals, "requiredApprovals", 1, 5),
+      allowProposerSelfApproval: booleanField(body.allowProposerSelfApproval, "allowProposerSelfApproval"),
+      allowEmergencyPublication: booleanField(body.allowEmergencyPublication, "allowEmergencyPublication"),
+      postReviewDueHours: integerField(body.postReviewDueHours, "postReviewDueHours", 1, 720),
+    });
+    await auditSemantic(env, { actorId: user.id, eventType: "semantic.governance.policy.created", resourceType: "semantic_governance_policy", resourceId: result.policyId, metadata: { policyId: result.policyId, scopeKind, domain, riskClass, requiredApprovals: Number(body.requiredApprovals) } });
+    return json(result, 201);
+  });
+}
+
+export async function semanticGovernanceAuthorities(request: Request, env: Env): Promise<Response> {
+  return governed(async () => {
+    const user = await requireUser(request, env);
+    requireBrowserSession(user);
+    requireCapability(user, "manage_semantic_governance");
+    const body = await semanticBody(request, ["scopeKind", "domain", "assetId", "userId", "raciRole", "canApprove", "canGovernRuntime"]);
+    const scopeKind = governanceScopeKind(body.scopeKind);
+    const assetId = scopeKind === "ASSET" ? validateOpaqueId(body.assetId, "assetId") : undefined;
+    const domain = optionalText(body.domain, "domain", SEMANTIC_LIMITS.domain) ?? "";
+    const raciRole = typeof body.raciRole === "string" && SEMANTIC_RACI_ROLES.includes(body.raciRole as (typeof SEMANTIC_RACI_ROLES)[number]) ? body.raciRole as (typeof SEMANTIC_RACI_ROLES)[number] : (() => { throw new HttpError(400, "SEMANTIC_GOVERNANCE_INVALID", "raciRole is invalid."); })();
+    const scopedDomain = scopeKind === "ASSET" ? (await loadGovernanceAsset(env.QUERYMIND_APP, assetId!)).domain : domain;
+    const result = await createSemanticAuthority(env.QUERYMIND_APP, {
+      actorId: user.id, scopeKind, domain: scopedDomain, assetId, userId: validateOpaqueId(body.userId, "userId"), raciRole,
+      canApprove: booleanField(body.canApprove, "canApprove"), canGovernRuntime: booleanField(body.canGovernRuntime, "canGovernRuntime"),
+    });
+    await auditSemantic(env, { actorId: user.id, eventType: "semantic.governance.authority.created", resourceType: "semantic_authority", resourceId: result.authorityId, metadata: { authorityId: result.authorityId, scopeKind, domain: scopedDomain } });
+    return json(result, 201);
+  });
+}
+
+export async function semanticApprovalReadiness(request: Request, env: Env, assetId: string, revisionId: string): Promise<Response> {
+  return governed(async () => {
+    const user = await requireUser(request, env);
+    requireCapability(user, "view_semantics");
+    const { asset, revision, readiness } = await approvalReadinessContext(env, user, assetId, revisionId, "APPROVE");
+    return json({ assetId: asset.assetId, revisionId: revision.revisionId, revisionNumber: revision.revisionNumber, revisionStatus: revision.revisionStatus, proposerUserId: revision.createdBy, submittedBy: revision.submittedBy, ...readiness });
+  });
+}
+
+export async function approveSemanticApi(request: Request, env: Env, assetId: string, revisionId: string): Promise<Response> {
+  return governed(async () => {
+    const user = await requireUser(request, env);
+    requireBrowserSession(user);
+    const body = await semanticBody(request, ["idempotencyKey", "comment"]);
+    const context = await approvalReadinessContext(env, user, assetId, revisionId, "APPROVE");
+    requireReady(context.readiness);
+    const result = await approveSemanticRevision(env.QUERYMIND_APP, { actorId: user.id, asset: context.asset, revision: context.revision, readiness: context.readiness, idempotencyKey: body.idempotencyKey, comment: body.comment });
+    return json({ assetId: context.asset.assetId, revisionId: context.revision.revisionId, published: result.published, registryVersion: result.registryVersion, replayed: result.replayed, ...(result.published ? { status: "APPROVED" } : { status: "IN_REVIEW" }) });
+  });
+}
+
+export async function emergencyPublishSemanticApi(request: Request, env: Env, assetId: string, revisionId: string): Promise<Response> {
+  return governed(async () => {
+    const user = await requireUser(request, env);
+    requireBrowserSession(user);
+    const body = await semanticBody(request, ["idempotencyKey", "reason", "changeReference", "reviewDueAt"]);
+    const context = await approvalReadinessContext(env, user, assetId, revisionId, "EMERGENCY_PUBLISH");
+    requireReady(context.readiness);
+    const result = await emergencyPublishSemanticRevision(env.QUERYMIND_APP, { actorId: user.id, asset: context.asset, revision: context.revision, readiness: context.readiness, idempotencyKey: body.idempotencyKey, reason: body.reason, changeReference: body.changeReference, reviewDueAt: body.reviewDueAt });
+    return json({ assetId: context.asset.assetId, revisionId: context.revision.revisionId, publicationId: result.publicationId, status: "APPROVED", publicationMode: "EMERGENCY", registryVersion: result.registryVersion, replayed: result.replayed });
+  });
+}
+
+async function runtimeGovernanceApi(request: Request, env: Env, assetId: string, revisionId: string, action: "SUSPEND" | "RESUME" | "POST_REVIEW_CONFIRMED" | "POST_REVIEW_REQUIRES_CORRECTION"): Promise<Response> {
+  const user = await requireUser(request, env);
+  requireBrowserSession(user);
+  const body = await semanticBody(request, ["idempotencyKey", "reason"]);
+  const readinessAction: SemanticGovernanceAction = action === "SUSPEND" ? "SUSPEND_RUNTIME" : action === "RESUME" ? "RESUME_RUNTIME" : "POST_REVIEW";
+  const context = await approvalReadinessContext(env, user, assetId, revisionId, readinessAction);
+  requireReady(context.readiness);
+  const result = await governSemanticRuntime(env.QUERYMIND_APP, { actorId: user.id, action, asset: context.asset, revision: context.revision, readiness: context.readiness, idempotencyKey: body.idempotencyKey, reason: body.reason });
+  const publication = await loadPublication(env.QUERYMIND_APP, context.revision.revisionId);
+  return json({ assetId: context.asset.assetId, revisionId: context.revision.revisionId, registryVersion: result.registryVersion, replayed: result.replayed, runtimeEligibility: publication?.runtime_eligibility, postReviewStatus: publication?.post_review_status });
+}
+
+export function suspendSemanticRuntimeApi(request: Request, env: Env, assetId: string, revisionId: string): Promise<Response> { return governed(() => runtimeGovernanceApi(request, env, assetId, revisionId, "SUSPEND")); }
+export function resumeSemanticRuntimeApi(request: Request, env: Env, assetId: string, revisionId: string): Promise<Response> { return governed(() => runtimeGovernanceApi(request, env, assetId, revisionId, "RESUME")); }
+export function postReviewSemanticApi(request: Request, env: Env, assetId: string, revisionId: string): Promise<Response> {
+  return governed(async () => {
+    const user = await requireUser(request, env);
+    requireBrowserSession(user);
+    const body = await semanticBody(request, ["idempotencyKey", "reason", "resolution"]);
+    const resolution = body.resolution === "CONFIRMED" ? "POST_REVIEW_CONFIRMED" : body.resolution === "REQUIRES_CORRECTION" ? "POST_REVIEW_REQUIRES_CORRECTION" : null;
+    if (!resolution) throw new HttpError(400, "SEMANTIC_GOVERNANCE_INVALID", "resolution must be CONFIRMED or REQUIRES_CORRECTION.");
+    const context = await approvalReadinessContext(env, user, assetId, revisionId, "POST_REVIEW");
+    requireReady(context.readiness);
+    const result = await governSemanticRuntime(env.QUERYMIND_APP, { actorId: user.id, action: resolution, asset: context.asset, revision: context.revision, readiness: context.readiness, idempotencyKey: body.idempotencyKey, reason: body.reason });
+    const publication = await loadPublication(env.QUERYMIND_APP, context.revision.revisionId);
+    return json({ assetId: context.asset.assetId, revisionId: context.revision.revisionId, registryVersion: result.registryVersion, replayed: result.replayed, runtimeEligibility: publication?.runtime_eligibility, postReviewStatus: publication?.post_review_status });
+  });
+}
+
+export async function semanticApprovalHistory(request: Request, env: Env, assetId: string, revisionId: string): Promise<Response> {
+  return governed(async () => {
+    const user = await requireUser(request, env);
+    requireCapability(user, "view_semantics");
+    const asset = await loadGovernanceAsset(env.QUERYMIND_APP, assetId);
+    const revision = await loadGovernanceRevision(env.QUERYMIND_APP, asset.assetId, revisionId);
+    const [decisions, publication, runtimeEvents] = await Promise.all([
+      env.QUERYMIND_APP.prepare("SELECT decision_id, actor_user_id, decision, risk_class, approval_slot, created_at FROM semantic_approval_decisions WHERE revision_id = ? ORDER BY created_at, decision_id").bind(revision.revisionId).all<Record<string, unknown>>(),
+      env.QUERYMIND_APP.prepare("SELECT publication_id, publication_mode, published_at, registry_version_before, registry_version_after, review_due_at, post_review_status, runtime_eligibility FROM semantic_publications WHERE revision_id = ?").bind(revision.revisionId).first<Record<string, unknown>>(),
+      env.QUERYMIND_APP.prepare("SELECT action, created_at FROM semantic_runtime_events WHERE publication_id = (SELECT publication_id FROM semantic_publications WHERE revision_id = ?) ORDER BY created_at").bind(revision.revisionId).all<Record<string, unknown>>(),
+    ]);
+    return json({ assetId: asset.assetId, revisionId: revision.revisionId, decisions: decisions.results ?? [], publication: publication ?? null, runtimeEvents: runtimeEvents.results ?? [] });
   });
 }

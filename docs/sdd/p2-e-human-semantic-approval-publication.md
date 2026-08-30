@@ -1,6 +1,6 @@
 # P2-E Human Semantic Approval & Publication Governance
 
-**Status:** implementation-ready contract; design only (P2-E code has not started)
+**Status:** implemented in the current release candidate; production deployment remains gated on the documented release checks.
 
 **Baseline:** P2-A/P2-B/P2-C/P2-D and P0/P1/P1.2 protected boundaries. The actual Worker and D1 code remain authoritative.
 
@@ -23,6 +23,7 @@ Use explicit capabilities, never a new wildcard privilege:
 | `emergency_publish_semantics` | Temporary break-glass publication | explicit incident/change scope, reason, deadline, and audit |
 | `suspend_semantics_runtime` | Mark a known-critical Approved semantic ineligible for new runtime use | governed domain/asset scope |
 | `resume_semantics_runtime` | Remove a suspension after required review | governed domain/asset scope and post-review evidence |
+| `manage_semantic_governance` | Configure policy and named human RACI assignments | governance administration only; does not confer approval authority |
 
 System Owner is not automatically a Semantic Owner. DBA is not automatically an approver. Domain Data Owners/Stewards are assigned through RACI configuration. AI is a Review Assistant only and never satisfies an approval slot.
 
@@ -33,10 +34,10 @@ DRAFT -> IN_REVIEW -> {DRAFT (request changes), REJECTED}
 IN_REVIEW -> deterministic validation -> quorum/SoD validation
            -> APPROVED -> atomic current_approved_revision_id switch
            -> registry_version + 1
-APPROVED -> SUPERSEDED (only when a later revision is published)
-APPROVED <-> RUNTIME_SUSPENDED (eligibility flag; history is immutable)
-IN_REVIEW -> EMERGENCY_APPROVED (break-glass, temporary, post-review due)
-EMERGENCY_APPROVED -> APPROVED or RUNTIME_SUSPENDED after mandatory review
+APPROVED remains immutable; a later publication only advances the asset's current pointer
+APPROVED <-> runtime_eligibility {ELIGIBLE, SUSPENDED} (history is immutable)
+IN_REVIEW -> APPROVED through an EMERGENCY publication record (post-review due)
+EMERGENCY publication -> post_review {CONFIRMED, REQUIRES_CORRECTION}
 ```
 
 An Approved revision and its approval evidence are immutable. Corrections create a new revision. Historical QueryRuns are never rewritten. A personal/session alias can resolve a name only; it cannot redefine a formula. Enterprise canonical and domain-approved variants remain distinct, and ambiguous cross-domain meaning must ask rather than silently publish.
@@ -69,19 +70,21 @@ One D1 batch/transaction must guard and atomically update:
 
 All statements must include the expected revision, asset status, snapshot, and current pointer preconditions. If any statement fails, the previous Approved pointer, revision, registry version, and evidence remain usable and consistent. Suspension/resume is an eligibility mutation and must never rewrite approval history.
 
-## 6. API contract (design only)
+## 6. Implemented API contract
 
 All mutation endpoints require a browser session, explicit capability, EffectiveScope/domain authorization, bounded JSON, no business-row reads, no SQL execution, and redacted audit metadata.
 
 | Endpoint | Contract |
 |---|---|
-| `POST /api/v1/semantics/:assetId/revisions/:revisionId/approve` | Ordinary approval; body includes expected revision number, idempotency key, and optional bounded comment. Runs validator/quorum and atomically publishes when complete. |
-| `POST /api/v1/semantics/:assetId/revisions/:revisionId/emergency-publish` | Requires `emergency_publish_semantics`; reason, incident/change reference, temporary marker, expiry, and post-review deadline are mandatory. |
+| `GET/POST /api/v1/semantics/governance/policies` | List/create domain or asset policy; browser session and `manage_semantic_governance` required. |
+| `POST /api/v1/semantics/governance/authorities` | Create an explicit, active RACI assignment; browser session and `manage_semantic_governance` required. |
+| `POST /api/v1/semantics/:assetId/revisions/:revisionId/approve` | Ordinary approval; bounded idempotency key and optional comment. Runs deterministic validation/quorum and atomically publishes only when complete. |
+| `POST /api/v1/semantics/:assetId/revisions/:revisionId/emergency-publish` | Requires `emergency_publish_semantics`; reason, incident/change reference, and future post-review deadline are mandatory. |
 | `POST /api/v1/semantics/:assetId/revisions/:revisionId/suspend-runtime` | Requires `suspend_semantics_runtime`; records bounded reason and effective time without changing historical revision. |
 | `POST /api/v1/semantics/:assetId/revisions/:revisionId/resume-runtime` | Requires `resume_semantics_runtime`; validates post-review obligations before restoring eligibility. |
 | `GET /api/v1/semantics/:assetId/revisions/:revisionId/approval` | Returns readiness, failures, proposer, required roles/domain, SoD, quorum, risk, evidence, and publication reference. |
 | `GET /api/v1/semantics/:assetId/revisions/:revisionId/approval-history` | Bounded immutable review/approval/suspension history; no secrets, rows, predicates, or credentials. |
-| `GET /api/v1/semantics/:assetId/revisions/:revisionId/approval-requirements` | Returns deterministic requirement set and current quorum status without revealing unauthorized scope. |
+| `GET /api/v1/semantics/:assetId/revisions/:revisionId/approval` | The implemented readiness endpoint is also the deterministic requirement view. |
 
 Idempotency keys are scoped to the actor, asset, revision, and operation. Replay returns the prior result; a concurrent pointer or snapshot change fails closed with a conflict.
 

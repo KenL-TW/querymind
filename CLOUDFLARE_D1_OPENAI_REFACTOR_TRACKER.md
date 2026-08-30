@@ -1,12 +1,12 @@
 # QueryMind Cloudflare D1 + OpenAI 重構追蹤表
 
-## 2026-08-30: Release quality closeout / P2-E readiness
+## 2026-08-30: P2-E human approval & publication governance
 
 | ID | Status | Delivered | Verification / current state |
 |---|---|---|---|
 | GAP-032 | Fixed - test-only | Namespaced the human-reviewed P2-D suggestion fixture with its generation run ID. Production semantic uniqueness and governance paths remain unchanged. Forensic evidence: `docs/releases/gap-032-root-cause.md`. | Retained-D1 P2-D API rerun 2/2 PASS; fresh isolated clone `npm ci`, APP 0001-0011/DATA 0001 init, full 117/117, Worker dry-run, and GitHub Actions run `33291766401` (both jobs) PASS. |
 | P2-D-CLOSEOUT | Pending manual session | Public production `/` and `/health` smoke PASS; anonymous protected requests fail closed. No production semantic mutation was performed. | Worker `0adc14e9-6e86-4bbf-93bf-fe476c8f20e4`, rollback `5c55b16b-4a02-4fb4-8906-687f1b6387ab`; authenticated Owner/DBA smoke is `NOT EXECUTED / HUMAN SESSION REQUIRED`; manual closeout remains PENDING. |
-| P2-E | Implementation ready - not started | Added deterministic human approval/publication contract at `docs/sdd/p2-e-human-semantic-approval-publication.md`; no P2-E code, migration, runtime semantic injection, or production asset was created. | Round 6 decisions are reconciled in `docs/releases/p2-d-production-closeout.md`. |
+| P2-E | In progress — local release gates green | Additive APP migration `0012`; explicit human RACI and separate policy configuration; fail-closed approval readiness; deterministic schema/catalog/dependency/alias/relationship checks after EffectiveScope; SoD/quorum and idempotency; atomic D1 normal and emergency publication; immutable audit/history; runtime suspension/resume and post-review; capability-gated Semantic Registry approval UI. No P2-F runtime semantic injection and no production semantic data were created. | Fresh local APP 0001–0012/DATA 0001 init PASS; typecheck, frontend syntax, migration immutability and P2-E API 2/2 PASS; complete P0–P2-E suite 119/119 PASS. GitHub/fresh-clone/CI and remote migration/deploy/smoke remain pending. |
 
 ## 2026-08-28: P1.2 Feedback & Trust Experience
 

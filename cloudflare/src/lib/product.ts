@@ -22,6 +22,11 @@ export const PRODUCT_CAPABILITIES = [
   "view_semantics",
   "manage_semantic_drafts",
   "review_semantics",
+  "approve_semantics",
+  "emergency_publish_semantics",
+  "suspend_semantics_runtime",
+  "resume_semantics_runtime",
+  "manage_semantic_governance",
 ] as const;
 export const MAX_SAFE_RESULT_ROWS = 10_000;
 

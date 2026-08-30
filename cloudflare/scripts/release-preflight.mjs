@@ -8,7 +8,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const contract = JSON.parse(readFileSync(path.join(root, "production-runtime-contract.json"), "utf8"));
 const configPath = path.join(root, "wrangler.production.jsonc");
 const config = JSON.parse(readFileSync(configPath, "utf8"));
-const requiredMigrations = Array.from({ length: 11 }, (_, index) => String(index + 1).padStart(4, "0"));
+const requiredMigrations = Array.from({ length: 12 }, (_, index) => String(index + 1).padStart(4, "0"));
 
 function assert(condition, message) { if (!condition) throw new Error(`Production preflight failed: ${message}`); }
 function git(...args) { return execFileSync("git", args, { cwd: path.join(root, ".."), encoding: "utf8" }).trim(); }

@@ -3248,5 +3248,17 @@ td select,
 .suggestion-table-options { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 14px; }
 .suggestion-table-options small { color: var(--ink-500); font-size: 9px; }
 .semantic-fixed-value { display: flex; align-items: center; min-height: 38px; padding: 7px 9px; border: 1px solid var(--line); border-radius: 7px; color: var(--ink-600); background: var(--surface-subtle); font-size: 11px; }
+/* P2-E approval information remains a compact, metadata-only extension of
+   the existing Registry; it never renders business rows or model output. */
+.semantic-approval { display: grid; gap: 14px; }
+.semantic-approval > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.semantic-approval > header h3 { margin-bottom: 0; }
+.semantic-validation-list, .semantic-history-list { display: grid; gap: 7px; margin: 0; padding: 0; list-style: none; }
+.semantic-validation-list li { display: grid; grid-template-columns: minmax(130px, auto) minmax(0, 1fr); gap: 9px; align-items: start; padding: 9px 10px; border: 1px solid #efd0ce; border-radius: 7px; color: var(--red-700); background: #fff8f7; font-size: 10px; line-height: 1.5; }
+.semantic-validation-list code { color: inherit; font-size: 9px; font-weight: 750; }
+.semantic-history-list li { padding: 8px 10px; border: 1px solid var(--line-soft); border-radius: 7px; color: var(--ink-650); background: var(--surface-subtle); font-size: 10px; }
+.semantic-ready-note { padding: 10px 11px; border-left: 3px solid var(--teal-600); color: var(--teal-800); background: #f1faf8; }
+.semantic-emergency-note { margin-top: 10px !important; padding: 10px 11px; border: 1px solid #edcfad; border-radius: 7px; color: #824e0b !important; background: #fff8ed; }
+.semantic-ai-boundary { padding-top: 11px; border-top: 1px solid var(--line-soft); color: var(--ink-500) !important; font-size: 10px !important; }
 @media (max-width: 1080px) { .semantic-filter-bar { grid-template-columns: minmax(200px, 1fr) repeat(2, minmax(120px, .5fr)); } .semantic-filter-bar .semantic-domain-filter { grid-column: auto; } }
 @media (max-width: 760px) { .semantic-detail-head, .semantic-pagination, .semantic-suggestion-card > header, .semantic-suggestion-card > footer { align-items: stretch; flex-direction: column; } .semantic-actions { justify-content: flex-start; } .semantic-detail-grid, .suggestion-uncertainty { grid-template-columns: 1fr; } .semantic-definition-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .semantic-inline-fields, .semantic-filter-bar, .suggestion-table-options { grid-template-columns: 1fr; } .semantic-repeat-row { grid-template-columns: 1fr 34px; } .semantic-repeat-row > label:first-child { grid-column: 1 / -1; } .semantic-source-list > div { grid-template-columns: 1fr; } .semantic-source-list small { text-align: left; } }

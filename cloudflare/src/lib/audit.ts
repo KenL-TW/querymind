@@ -10,6 +10,8 @@ export async function audit(
 const SEMANTIC_AUDIT_FIELDS = new Set([
   "assetId", "revisionId", "assetType", "revisionNumber", "action", "schemaSnapshotId",
   "runId", "suggestionId", "suggestionType", "promptFingerprint", "modelConfigFingerprint",
+  "policyId", "authorityId", "scopeKind", "domain", "riskClass", "requiredApprovals",
+  "publicationId", "publicationMode", "registryVersionBefore", "registryVersionAfter", "resultCode",
 ]);
 const SEMANTIC_AUDIT_EVENTS = new Set([
   "semantic.asset.created",
@@ -22,6 +24,9 @@ const SEMANTIC_AUDIT_EVENTS = new Set([
   "semantic.suggestion.accepted_as_draft",
   "semantic.suggestion.dismissed",
   "semantic.suggestion.generation_failed",
+  "semantic.governance.policy.created",
+  "semantic.governance.authority.created",
+  "semantic.governance.authority.deactivated",
 ]);
 
 /**

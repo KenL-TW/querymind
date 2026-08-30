@@ -105,7 +105,9 @@ test.describe("P2-B governed semantic design-time API", () => {
     expect((await rejected.json()).status).toBe("REJECTED");
 
     const approve = await ownerApi.post(absoluteUrl(`/api/v1/semantics/${createdBody.assetId}/revisions/${secondBody.revisionId}/approve`));
-    expect(approve.status()).toBe(404);
+    // P2-E now owns this route. A call without its required JSON body is
+    // rejected before any governance mutation rather than falling through.
+    expect(approve.status()).toBe(415);
 
     const viewer = await provisionViewer(ownerApi);
     const viewerApi = await playwright.request.newContext({ baseURL: absoluteUrl("/") });

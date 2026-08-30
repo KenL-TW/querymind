@@ -12,7 +12,7 @@ import { addMessage, createSession, deleteSession, listMessages, listSessions, s
 import { currentUsage, publicConfiguration } from "./routes/system";
 import { submitQueryFeedback } from "./routes/feedback";
 import { acceptInvitation, invitationPreview } from "./routes/invitations";
-import { createSemantic, createSemanticRevisionApi, getSemantic, listSemanticReviews, listSemanticRevisions, listSemantics, patchSemanticRevision, rejectSemanticApi, requestSemanticChangesApi, submitSemanticReview } from "./routes/semantics";
+import { approveSemanticApi, createSemantic, createSemanticRevisionApi, emergencyPublishSemanticApi, getSemantic, listSemanticReviews, listSemanticRevisions, listSemantics, patchSemanticRevision, postReviewSemanticApi, rejectSemanticApi, requestSemanticChangesApi, resumeSemanticRuntimeApi, semanticApprovalHistory, semanticApprovalReadiness, semanticGovernanceAuthorities, semanticGovernanceConfig, submitSemanticReview, suspendSemanticRuntimeApi } from "./routes/semantics";
 import { acceptSemanticSuggestionAsDraftApi, dismissSemanticSuggestion, generateSemanticSuggestions, getSemanticSuggestion, listSemanticSuggestions, semanticSuggestionCatalog } from "./routes/semantic-suggestions";
 import { adminOverview, auditLog, connectionInfo, createApiKey, createInsight, createInvitation, createTemplate, dashboard, deleteDictionary, deleteInsight, deleteTemplate, exportCsv, listApiKeys, listDictionary, listInsights, listInvitations, listRoles, listTemplates, listUsers, resetUserPassword, revokeApiKey, revokeInvitation, saveDictionary, systemInfo, updateInsight, updateRole, updateTemplate, updateUser } from "./routes/modules";
 
@@ -29,8 +29,8 @@ interface HealthPayload {
 
 async function checkAppDatabase(database: D1Database): Promise<HealthDatabase> {
   try {
-    const row = await database.prepare("SELECT COUNT(*) AS total FROM sqlite_schema WHERE type = 'table' AND name IN ('users', 'role_definitions', 'schema_catalog_tables', 'rate_limit_counters', 'audit_events', 'data_scope_policies', 'policy_state', 'query_feedback')").first<{ total: number }>();
-    return row?.total === 8 ? "ok" : "unavailable";
+    const row = await database.prepare("SELECT COUNT(*) AS total FROM sqlite_schema WHERE type = 'table' AND name IN ('users', 'role_definitions', 'schema_catalog_tables', 'rate_limit_counters', 'audit_events', 'data_scope_policies', 'policy_state', 'query_feedback', 'semantic_governance_policies', 'semantic_publications')").first<{ total: number }>();
+    return row?.total === 10 ? "ok" : "unavailable";
   } catch {
     return "unavailable";
   }
@@ -104,6 +104,8 @@ async function route(request: Request, env: Env): Promise<Response> {
   if (request.method === "POST" && url.pathname === "/api/v1/schema/refresh") return refreshSchema(request, env);
   if (request.method === "GET" && url.pathname === "/api/v1/semantics") return listSemantics(request, env);
   if (request.method === "POST" && url.pathname === "/api/v1/semantics") return createSemantic(request, env);
+  if ((request.method === "GET" || request.method === "POST") && url.pathname === "/api/v1/semantics/governance/policies") return semanticGovernanceConfig(request, env);
+  if (request.method === "POST" && url.pathname === "/api/v1/semantics/governance/authorities") return semanticGovernanceAuthorities(request, env);
   if (request.method === "POST" && url.pathname === "/api/v1/semantics/suggestions/generate") return generateSemanticSuggestions(request, env);
   if (request.method === "GET" && url.pathname === "/api/v1/semantics/suggestions/catalog") return semanticSuggestionCatalog(request, env);
   if (request.method === "GET" && url.pathname === "/api/v1/semantics/suggestions") return listSemanticSuggestions(request, env);
@@ -127,6 +129,17 @@ async function route(request: Request, env: Env): Promise<Response> {
   if (dictionary && request.method === "DELETE") return deleteDictionary(request, env, dictionary[1]);
   const semanticReviews = url.pathname.match(/^\/api\/v1\/semantics\/([A-Za-z0-9_-]{1,128})\/revisions\/([A-Za-z0-9_-]{1,128})\/reviews$/u);
   if (semanticReviews && request.method === "GET") return listSemanticReviews(request, env, semanticReviews[1], semanticReviews[2]);
+  const semanticApproval = url.pathname.match(/^\/api\/v1\/semantics\/([A-Za-z0-9_-]{1,128})\/revisions\/([A-Za-z0-9_-]{1,128})\/(approval|approval-history|approve|emergency-publish|suspend-runtime|resume-runtime|post-review)$/u);
+  if (semanticApproval) {
+    const [assetId, revisionId, action] = [semanticApproval[1], semanticApproval[2], semanticApproval[3]];
+    if (action === "approval" && request.method === "GET") return semanticApprovalReadiness(request, env, assetId, revisionId);
+    if (action === "approval-history" && request.method === "GET") return semanticApprovalHistory(request, env, assetId, revisionId);
+    if (action === "approve" && request.method === "POST") return approveSemanticApi(request, env, assetId, revisionId);
+    if (action === "emergency-publish" && request.method === "POST") return emergencyPublishSemanticApi(request, env, assetId, revisionId);
+    if (action === "suspend-runtime" && request.method === "POST") return suspendSemanticRuntimeApi(request, env, assetId, revisionId);
+    if (action === "resume-runtime" && request.method === "POST") return resumeSemanticRuntimeApi(request, env, assetId, revisionId);
+    if (action === "post-review" && request.method === "POST") return postReviewSemanticApi(request, env, assetId, revisionId);
+  }
   const semanticRevisionAction = url.pathname.match(/^\/api\/v1\/semantics\/([A-Za-z0-9_-]{1,128})\/revisions\/([A-Za-z0-9_-]{1,128})\/(submit-review|request-changes|reject)$/u);
   if (semanticRevisionAction && request.method === "POST") {
     if (semanticRevisionAction[3] === "submit-review") return submitSemanticReview(request, env, semanticRevisionAction[1], semanticRevisionAction[2]);

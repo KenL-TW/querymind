@@ -25,6 +25,7 @@ const inputs = [
   ["querymind-app", "migrations/app/0009_semantic_governance_capabilities.sql"],
   ["querymind-app", "migrations/app/0010_semantic_schema_intelligence_suggestions.sql"],
   ["querymind-app", "migrations/app/0011_feedback_trust_experience.sql"],
+  ["querymind-app", "migrations/app/0012_semantic_approval_publication.sql"],
 ];
 
 for (const [database, file] of inputs) {
@@ -47,6 +48,14 @@ const expectedTables = [
   "semantic_reviews",
   "semantic_suggestion_runs",
   "semantic_suggestions",
+  "semantic_governance_policies",
+  "semantic_authorities",
+  "semantic_approval_decisions",
+  "semantic_publications",
+  "semantic_runtime_events",
+  "semantic_governance_idempotency",
+  "semantic_publication_commands",
+  "semantic_runtime_commands",
 ];
 const expectedIndexes = [
   "idx_semantic_assets_status_type",
@@ -63,7 +72,7 @@ const expectedIndexes = [
   "idx_semantic_suggestions_run_status",
   "idx_semantic_suggestions_status_type",
 ];
-const verificationSql = "SELECT name FROM sqlite_schema WHERE type = 'table' AND name IN (" + expectedTables.map((name) => `'${name}'`).join(",") + ") ORDER BY name; SELECT name FROM sqlite_schema WHERE type = 'index' AND name IN (" + expectedIndexes.map((name) => `'${name}'`).join(",") + ") ORDER BY name; SELECT registry_version FROM semantic_registry_state WHERE state_key = 'global'; PRAGMA table_info(schema_catalog_state); PRAGMA table_info(query_feedback); PRAGMA foreign_key_list(semantic_sources); PRAGMA foreign_key_list(semantic_suggestions); SELECT sql FROM sqlite_schema WHERE type IN ('table','trigger') AND name IN ('semantic_assets','semantic_revisions','semantic_sources','semantic_aliases','semantic_reviews','semantic_suggestion_runs','semantic_suggestions','semantic_suggestions_generated_content_immutable');";
+const verificationSql = "SELECT name FROM sqlite_schema WHERE type = 'table' AND name IN (" + expectedTables.map((name) => `'${name}'`).join(",") + ") ORDER BY name; SELECT name FROM sqlite_schema WHERE type = 'index' AND name IN (" + expectedIndexes.map((name) => `'${name}'`).join(",") + ") ORDER BY name; SELECT registry_version FROM semantic_registry_state WHERE state_key = 'global'; PRAGMA table_info(schema_catalog_state); PRAGMA table_info(query_feedback); PRAGMA foreign_key_list(semantic_sources); PRAGMA foreign_key_list(semantic_suggestions); SELECT sql FROM sqlite_schema WHERE type IN ('table','trigger') AND name IN ('semantic_assets','semantic_revisions','semantic_sources','semantic_aliases','semantic_reviews','semantic_suggestion_runs','semantic_suggestions','semantic_governance_policies','semantic_authorities','semantic_approval_decisions','semantic_publications','semantic_publication_commands','semantic_runtime_commands','semantic_suggestions_generated_content_immutable','semantic_publication_command_guard','semantic_publication_command_apply','semantic_runtime_command_guard','semantic_runtime_command_apply');";
 const verification = spawnSync(process.execPath, [wrangler, "d1", "execute", "querymind-app", "--local", `--persist-to=${persistPath}`, "--command", verificationSql, "--json"], {
   cwd: root,
   encoding: "utf8",
@@ -82,9 +91,12 @@ for (const index of expectedIndexes) {
 if (!(verification.stdout ?? "").includes("registry_version") || !(verification.stdout ?? "").includes('"registry_version": 0') || !(verification.stdout ?? "").includes('"name": "schema_snapshot_id"')) throw new Error("P2-A migration verification failed: registry seed or schema snapshot column is missing");
 if (!(verification.stdout ?? "").includes("semantic_revisions") || !(verification.stdout ?? "").includes("CHECK") || !(verification.stdout ?? "").includes("UNIQUE") || !(verification.stdout ?? "").includes('"from": "referenced_asset_id"')) throw new Error("P2-A migration verification failed: semantic FK/CHECK/UNIQUE constraints are missing");
 if (!(verification.stdout ?? "").includes("semantic_suggestions_generated_content_immutable") || !(verification.stdout ?? "").includes('"from": "accepted_asset_id"')) throw new Error("P2-D migration verification failed: immutable suggestion content or acceptance FK is missing");
+for (const name of ["semantic_publication_command_guard", "semantic_publication_command_apply", "semantic_runtime_command_guard", "semantic_runtime_command_apply"]) {
+  if (!(verification.stdout ?? "").includes(name)) throw new Error(`P2-E migration verification failed: missing ${name}`);
+}
 for (const column of ["feedback_version", "target_type", "target_ref", "issue_category", "correction_text"]) {
   if (!(verification.stdout ?? "").includes(`"name": "${column}"`)) throw new Error(`P1.2 migration verification failed: missing query_feedback.${column}`);
 }
 
 console.log(`Disposable local D1 initialized at ${persistPath}`);
-console.log("Applied app migrations 0001-0011, including DLP, governed query safety, explainability feedback, semantic persistence, semantic governance, P2-D schema intelligence suggestions, and P1.2 structured feedback.");
+console.log("Applied app migrations 0001-0012, including DLP, governed query safety, explainability feedback, semantic persistence, P2-D schema intelligence, P1.2 structured feedback, and P2-E human approval publication governance.");
