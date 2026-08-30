@@ -134,7 +134,7 @@ CREATE TABLE IF NOT EXISTS semantic_runtime_commands (
 CREATE TRIGGER IF NOT EXISTS semantic_publication_command_guard
 BEFORE INSERT ON semantic_publication_commands
 BEGIN
-  SELECT CASE WHEN NOT EXISTS (
+  SELECT IIF(NOT EXISTS (
     SELECT 1
     FROM semantic_revisions r
     JOIN semantic_assets a ON a.asset_id = r.asset_id
@@ -157,7 +157,7 @@ BEGIN
           AND p.allow_emergency_publication = 1
           AND EXISTS (SELECT 1 FROM semantic_approval_decisions d WHERE d.revision_id = r.revision_id AND d.actor_user_id = NEW.actor_user_id AND d.decision = 'EMERGENCY_PUBLISH'))
       )
-  ) THEN RAISE(ABORT, 'semantic publication precondition failed') END;
+  ), RAISE(ABORT, 'semantic publication precondition failed'), NULL);
 END;
 
 CREATE TRIGGER IF NOT EXISTS semantic_publication_command_apply
@@ -202,7 +202,7 @@ END;
 CREATE TRIGGER IF NOT EXISTS semantic_runtime_command_guard
 BEFORE INSERT ON semantic_runtime_commands
 BEGIN
-  SELECT CASE WHEN NOT EXISTS (
+  SELECT IIF(NOT EXISTS (
     SELECT 1
     FROM semantic_publications sp
     JOIN semantic_revisions r ON r.revision_id = sp.revision_id
@@ -219,7 +219,7 @@ BEGIN
         OR (NEW.action = 'RESUME' AND sp.runtime_eligibility = 'SUSPENDED' AND length(NEW.reason) > 0)
         OR (NEW.action = 'POST_REVIEW_CONFIRMED' AND sp.publication_mode = 'EMERGENCY' AND sp.post_review_status = 'PENDING')
         OR (NEW.action = 'POST_REVIEW_REQUIRES_CORRECTION' AND sp.publication_mode = 'EMERGENCY' AND sp.post_review_status = 'PENDING' AND length(NEW.reason) > 0))
-  ) THEN RAISE(ABORT, 'semantic runtime governance precondition failed') END;
+  ), RAISE(ABORT, 'semantic runtime governance precondition failed'), NULL);
 END;
 
 CREATE TRIGGER IF NOT EXISTS semantic_runtime_command_apply
