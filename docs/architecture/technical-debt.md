@@ -7,7 +7,7 @@ None identified after the GAP-032 test-fixture fix. The full regression and fres
 ## Should fix before P2-E
 
 - Complete authenticated P2-D manual production closeout and preserve evidence.
-- Confirm the GitHub Actions run for the closeout commit before marking release quality complete.
+- Keep the green GitHub Actions release gate (`33291766401`) attached to future changes.
 - Perform an isolated D1 export/restore rehearsal; do not restore Production as a test.
 - Decide an authenticated smoke-token/session mechanism that remains operator-supplied and does not store credentials.
 - Define alert routing/SLO ownership for the documented Worker, D1, AI Gateway, policy, and suggestion signals.

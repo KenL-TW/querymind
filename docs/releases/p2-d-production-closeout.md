@@ -10,7 +10,7 @@
 * Worker: `0adc14e9-6e86-4bbf-93bf-fe476c8f20e4`
 * Rollback: `5c55b16b-4a02-4fb4-8906-687f1b6387ab`
 * Git baseline: `4396c6dbc1f0e5517d9f1cd73755ae2aaa7a703d`
-* Closeout commit: recorded in the Git/CI section of the final report
+* Closeout commit: `c145465488b31cd6ab748643f122ba69222f9222`
 * APP migrations: `0001`-`0011`; DATA migration: `0001`
 * Production semantic registry baseline: version `0`, assets/revisions/reviews `0/0/0`
 
@@ -33,8 +33,9 @@ The test now namespaces the reviewed fixture by the current suggestion `runId`. 
 | Typecheck, syntax, migration immutability, manifests | PASS |
 | Worker production dry-run | PASS; 298.99 KiB / gzip 65.11 KiB |
 | Fresh clone (`npm ci`, clean checkout, isolated D1) | PASS; full 117/117 and dry-run PASS |
+| GitHub Actions CI | PASS; run `33291766401`; `cloudflare-runtime` and `legacy-regression-only` both successful |
 
-The CI workflow remains the repository release gate and must be green for the final quality claim.
+The repository CI release gate is green for closeout commit `c145465488b31cd6ab748643f122ba69222f9222`.
 
 ## Production-safe closeout
 
