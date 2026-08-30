@@ -1,10 +1,18 @@
 # QueryMind Cloudflare D1 + OpenAI 重構追蹤表
 
+## 2026-08-30: Release quality closeout / P2-E readiness
+
+| ID | Status | Delivered | Verification / current state |
+|---|---|---|---|
+| GAP-032 | Fixed - test-only | Namespaced the human-reviewed P2-D suggestion fixture with its generation run ID. Production semantic uniqueness and governance paths remain unchanged. Forensic evidence: `docs/releases/gap-032-root-cause.md`. | Retained-D1 P2-D API rerun 2/2 PASS; fresh isolated clone `npm ci`, APP 0001-0011/DATA 0001 init, full 117/117, and Worker dry-run PASS. |
+| P2-D-CLOSEOUT | Pending manual session | Public production `/` and `/health` smoke PASS; anonymous protected requests fail closed. No production semantic mutation was performed. | Worker `0adc14e9-6e86-4bbf-93bf-fe476c8f20e4`, rollback `5c55b16b-4a02-4fb4-8906-687f1b6387ab`; authenticated Owner/DBA smoke is `NOT EXECUTED / HUMAN SESSION REQUIRED`; manual closeout remains PENDING. |
+| P2-E | Implementation ready - not started | Added deterministic human approval/publication contract at `docs/sdd/p2-e-human-semantic-approval-publication.md`; no P2-E code, migration, runtime semantic injection, or production asset was created. | Round 6 decisions are reconciled in `docs/releases/p2-d-production-closeout.md`. |
+
 ## 2026-08-28: P1.2 Feedback & Trust Experience
 
 | ID | Status | Delivered | Verification / current state |
 |---|---|---|---|
-| P1.2 | Complete — deployed | Structured query-run-linked feedback capture is implemented as additive APP migration `0011`; P1 compatibility, deterministic evidence target validation, bounded correction text, retry-safe progressive disclosure, inline evidence actions, and audit metadata boundaries are covered in code/tests. No AI, SQL execution, semantic mutation, or P2-D suggestion mutation is introduced. | Worker `0adc14e9-6e86-4bbf-93bf-fe476c8f20e4`; rollback `5c55b16b-4a02-4fb4-8906-687f1b6387ab`; remote APP 0011 applied and no migrations remain. `/` and `/health` 200 (production/AI ready/D1/P0 policy 72); anonymous schema/semantics/feedback 401. Unit 97/97 and product/RBAC E2E 20/20 PASS; integrated `test:all` 116/117 because an existing P2-D fixture collides across suites, with no P1.2 failure. Authenticated production UX remains `NOT_EXECUTED_BY_DESIGN`; P2-D manual closeout remains PENDING. |
+| P1.2 | Complete — deployed | Structured query-run-linked feedback capture is implemented as additive APP migration `0011`; P1 compatibility, deterministic evidence target validation, bounded correction text, retry-safe progressive disclosure, inline evidence actions, and audit metadata boundaries are covered in code/tests. No AI, SQL execution, semantic mutation, or P2-D suggestion mutation is introduced. | Worker `0adc14e9-6e86-4bbf-93bf-fe476c8f20e4`; rollback `5c55b16b-4a02-4fb4-8906-687f1b6387ab`; remote APP 0011 applied and no migrations remain. `/` and `/health` 200 (production/AI ready/D1/P0 policy 72); anonymous schema/semantics/feedback 401. Unit 97/97, product/RBAC E2E 20/20, and repaired integrated `test:all` 117/117 PASS. Authenticated production UX remains `NOT_EXECUTED_BY_DESIGN`; P2-D manual closeout remains PENDING. |
 
 ## 2026-08-27: R14 Post-P2-D source-of-truth and reproducibility hardening
 

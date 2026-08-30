@@ -2,11 +2,12 @@
 
 ## Must fix now
 
-None identified by the post-P2-D hardening audit. This classification depends on the full regression suite remaining green and source synchronization completing.
+None identified after the GAP-032 test-fixture fix. The full regression and fresh-clone gates are green; the remaining production item is an operator-owned manual smoke, not a code defect.
 
 ## Should fix before P2-E
 
 - Complete authenticated P2-D manual production closeout and preserve evidence.
+- Confirm the GitHub Actions run for the closeout commit before marking release quality complete.
 - Perform an isolated D1 export/restore rehearsal; do not restore Production as a test.
 - Decide an authenticated smoke-token/session mechanism that remains operator-supplied and does not store credentials.
 - Define alert routing/SLO ownership for the documented Worker, D1, AI Gateway, policy, and suggestion signals.

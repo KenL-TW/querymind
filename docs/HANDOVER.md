@@ -25,6 +25,7 @@ QueryMind is a governed AI data-query application. Production is the Cloudflare 
 - Current semantic state: registry version 0; no assets, revisions, reviews, or suggestion runs
 - Release evidence: [P2-D manifest](releases/manifests/p2-d-production.json)
 - P1.2 release evidence: [Feedback & Trust manifest](releases/manifests/p1.2-feedback-trust.json)
+- Release-quality closeout: [P2-D closeout and P2-E readiness](releases/p2-d-production-closeout.md)
 
 P1.2 feedback is a query-run-linked capture boundary. It validates evidence
 targets against persisted Explainability, preserves owner-only successful-run
@@ -47,7 +48,7 @@ The D1 initializer is disposable and local. D1 migrations are explicit, reviewed
 
 ## What comes next and what is forbidden
 
-P2-D manual production generation smoke remains pending. P2-E is not started and needs its own authority design. P2-F is not started.
+GAP-032 cross-suite fixture isolation is fixed in tests; fresh-clone and full-suite evidence is now green. P2-D manual production generation smoke remains pending because no authenticated Owner/DBA session was supplied. P2-E is not started in code; its implementation-ready authority contract is documented. P2-F is not started.
 
 Do not add LLM-based authorization, direct `QUERYMIND_DATA` execution, full-schema exposure before EffectiveScope, runtime semantic consumption, AI semantic approval, AI-generated row policy, or write-enabled AI SQL.
 

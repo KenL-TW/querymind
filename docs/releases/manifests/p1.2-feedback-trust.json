@@ -16,7 +16,7 @@
   "tests": {
     "unit": { "passed": 97, "total": 97 },
     "e2e": { "passed": 20, "total": 20 },
-    "full": { "passed": 116, "total": 117 }
+    "full": { "passed": 117, "total": 117 }
   },
   "environment": "production",
   "aiMockMode": false,
