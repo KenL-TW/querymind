@@ -1,6 +1,6 @@
 # P2-E Human Semantic Approval & Publication Governance
 
-**Status:** implemented in the current release candidate; production deployment remains gated on the documented release checks.
+**Status:** implemented and deployed in production. Authenticated operator closeout remains a separate manual gate; no production semantic approval mutation is required when the registry is empty.
 
 **Baseline:** P2-A/P2-B/P2-C/P2-D and P0/P1/P1.2 protected boundaries. The actual Worker and D1 code remain authoritative.
 

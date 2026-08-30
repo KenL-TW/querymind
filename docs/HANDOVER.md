@@ -26,7 +26,7 @@ QueryMind is a governed AI data-query application. Production is the Cloudflare 
 - Current semantic state: registry version 0; no assets, revisions, reviews, or suggestion runs
 - Release evidence: [P2-D manifest](releases/manifests/p2-d-production.json)
 - P1.2 release evidence: [Feedback & Trust manifest](releases/manifests/p1.2-feedback-trust.json)
-- Release-quality closeout: [P2-D closeout and P2-E readiness](releases/p2-d-production-closeout.md)
+- Release-quality closeout: [P2-E production release and authenticated closeout](releases/p2-e-human-semantic-approval-publication.md)
 
 P1.2 feedback is a query-run-linked capture boundary. It validates evidence
 targets against persisted Explainability, preserves owner-only successful-run
@@ -49,7 +49,7 @@ The D1 initializer is disposable and local. D1 migrations are explicit, reviewed
 
 ## What comes next and what is forbidden
 
-P2-E is implemented as a design-time governance boundary: human-only RACI, deterministic policy/readiness, quorum and separation-of-duties checks, atomic normal or break-glass publication, immutable evidence, and suspend/resume eligibility. It does not inject semantics into Chat/Direct Query; P2-F is not started. Production still requires the P2-E release gate and a human governance administrator must configure policy and RACI after deployment before any revision can publish.
+P2-E is implemented and deployed as a design-time governance boundary: human-only RACI, deterministic policy/readiness, quorum and separation-of-duties checks, atomic normal or break-glass publication, immutable evidence, and suspend/resume eligibility. It does not inject semantics into Chat/Direct Query; P2-F is not started. Production currently has no semantic assets, policies, or authorities; authenticated operator readiness smoke remains the only closeout gate.
 
 Do not add LLM-based authorization, direct `QUERYMIND_DATA` execution, full-schema exposure before EffectiveScope, runtime semantic consumption, AI semantic approval, AI-generated row policy, or write-enabled AI SQL.
 

@@ -59,3 +59,61 @@ stored or used by the release script.
 
 Rollback is Worker-only. Do not attempt to roll back or edit the forward-only
 APP migration; keep a pre-migration recovery export per the production runbook.
+
+## Authenticated governance closeout (2026-08-30)
+
+### Production baseline (read-only)
+
+| Item | Observed value |
+|---|---|
+| Git SHA | `3d71988` (documentation closeout); deployed runtime source is the preceding `208eb6f` tree |
+| Worker | `24622697-5acd-48ef-bbc8-58016589e129` |
+| Rollback Worker | `0adc14e9-6e86-4bbf-93bf-fe476c8f20e4` |
+| APP migrations | `0001`–`0012`; no pending migration |
+| DATA migrations | `0001`; unchanged |
+| Schema snapshot | `9fc08cbf8ee017c5f6041f7eaa6b7a0b0411b185f4d7e503e0ca47ecdc3b49d3` |
+| Active P0 policy rows | `72` |
+| Catalog | `14` tables / `115` columns |
+| Registry / assets / revisions / reviews | `0 / 0 / 0 / 0` |
+| Publications / approvals / authorities | `0 / 0 / 0` |
+
+The read-only D1 query returned `rows_written=0` and `changed_db=false`. The
+P2-E tables are present but empty, as expected from the fail-closed migration.
+
+### Authenticated readiness
+
+No browser or existing authenticated production session was available in this
+execution environment. No token, cookie, user, role, authority, policy, asset,
+revision, or semantic configuration was created or inspected beyond bounded
+counts. Therefore the operator-owned authenticated UI/API readiness smoke is
+recorded as **NOT EXECUTED — EXISTING SESSION REQUIRED**, not as a defect.
+
+The deterministic implementation and CI evidence still verify the authority
+boundary: a System Owner/DBA product role is not an implicit semantic approver;
+without an active configured policy/authority the readiness contract returns
+`SEMANTIC_APPROVAL_AUTHORITY_NOT_CONFIGURED`. Existing P2-E API tests cover
+authority denial, quorum, SoD, atomic publication, replay, emergency separation,
+and runtime eligibility using disposable fixtures only.
+
+### Mutation and runtime gates
+
+- P2-E production approval mutation = **NOT EXERCISED BY DESIGN** (registry has
+  no legitimate semantic asset/revision).
+- Publication before/after = `0 / 0`; current approved pointers unchanged;
+  exactly-once and idempotency are covered in CI fixtures, not production.
+- Break-glass = **READINESS VERIFIED** from capability/contract inspection;
+  mutation **NOT EXERCISED BY DESIGN** (no incident).
+- Runtime suspension = **READINESS VERIFIED** from capability/contract
+  inspection; mutation **NOT EXERCISED BY DESIGN** (no known-bad semantic).
+- P2-D remains suggestion-only; no suggestion or Draft was created.
+- Public `/`, `/health`, and anonymous protected-endpoint smoke passed. The
+  canonical authenticated P1 query was not run because no production session
+  was available; the deployed Chat code path is unchanged and GitHub CI run
+  `33319658388` passed the complete `119/119` regression suite.
+
+### Closeout decision
+
+`P2-E = BLOCKED` — code, migration, deployment, public health, and automated
+governance invariants are green, but the required authenticated production
+Registry/authority smoke still needs an operator-provided existing session.
+No production semantic state changed during closeout.
