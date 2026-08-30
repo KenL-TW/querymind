@@ -183,7 +183,7 @@ BEGIN
   SELECT NEW.command_id, NEW.asset_id, NEW.revision_id, NEW.publication_mode, r.schema_snapshot_id, NEW.validator_version,
     NEW.expected_registry_version, NEW.expected_registry_version + 1, NEW.actor_user_id, NEW.created_at, NEW.emergency_reason,
     NEW.change_reference, NEW.review_due_at,
-    CASE WHEN NEW.publication_mode = 'EMERGENCY' THEN 'PENDING' ELSE 'NOT_REQUIRED' END,
+    IIF(NEW.publication_mode = 'EMERGENCY', 'PENDING', 'NOT_REQUIRED'),
     'ELIGIBLE', NEW.created_at
   FROM semantic_revisions r WHERE r.revision_id = NEW.revision_id AND r.revision_status = 'APPROVED';
 
@@ -192,7 +192,7 @@ BEGIN
 
   INSERT INTO audit_events (id, actor_id, event_type, resource_type, resource_id, metadata_json, created_at)
   VALUES (NEW.command_id, NEW.actor_user_id,
-    CASE WHEN NEW.publication_mode = 'EMERGENCY' THEN 'semantic.publication.emergency' ELSE 'semantic.publication.normal' END,
+    IIF(NEW.publication_mode = 'EMERGENCY', 'semantic.publication.emergency', 'semantic.publication.normal'),
     'semantic_publication', NEW.command_id,
     json_object('assetId', NEW.asset_id, 'revisionId', NEW.revision_id, 'publicationMode', NEW.publication_mode,
       'registryVersionBefore', NEW.expected_registry_version, 'registryVersionAfter', NEW.expected_registry_version + 1),
@@ -226,9 +226,9 @@ CREATE TRIGGER IF NOT EXISTS semantic_runtime_command_apply
 AFTER INSERT ON semantic_runtime_commands
 BEGIN
   UPDATE semantic_publications
-  SET runtime_eligibility = CASE WHEN NEW.action = 'SUSPEND' THEN 'SUSPENDED' WHEN NEW.action = 'RESUME' THEN 'ELIGIBLE' ELSE runtime_eligibility END,
+  SET runtime_eligibility = IIF(NEW.action = 'SUSPEND', 'SUSPENDED', IIF(NEW.action = 'RESUME', 'ELIGIBLE', runtime_eligibility)),
       runtime_updated_at = NEW.created_at,
-      post_review_status = CASE WHEN NEW.action = 'POST_REVIEW_CONFIRMED' THEN 'CONFIRMED' WHEN NEW.action = 'POST_REVIEW_REQUIRES_CORRECTION' THEN 'REQUIRES_CORRECTION' ELSE post_review_status END
+      post_review_status = IIF(NEW.action = 'POST_REVIEW_CONFIRMED', 'CONFIRMED', IIF(NEW.action = 'POST_REVIEW_REQUIRES_CORRECTION', 'REQUIRES_CORRECTION', post_review_status))
   WHERE publication_id = NEW.publication_id;
 
   UPDATE semantic_registry_state
@@ -240,11 +240,11 @@ BEGIN
 
   INSERT INTO audit_events (id, actor_id, event_type, resource_type, resource_id, metadata_json, created_at)
   VALUES (NEW.command_id, NEW.actor_user_id,
-    CASE NEW.action WHEN 'SUSPEND' THEN 'semantic.runtime.suspended' WHEN 'RESUME' THEN 'semantic.runtime.resumed' ELSE 'semantic.emergency.post_review' END,
+    IIF(NEW.action = 'SUSPEND', 'semantic.runtime.suspended', IIF(NEW.action = 'RESUME', 'semantic.runtime.resumed', 'semantic.emergency.post_review')),
     'semantic_publication', NEW.publication_id,
     json_object('assetId', NEW.asset_id, 'revisionId', NEW.revision_id, 'action', NEW.action,
       'registryVersionBefore', NEW.expected_registry_version,
-      'registryVersionAfter', NEW.expected_registry_version + CASE WHEN NEW.action IN ('SUSPEND', 'RESUME') THEN 1 ELSE 0 END),
+      'registryVersionAfter', NEW.expected_registry_version + IIF(NEW.action IN ('SUSPEND', 'RESUME'), 1, 0)),
     NEW.created_at);
 END;
 
