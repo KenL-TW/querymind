@@ -27,9 +27,14 @@ test.describe("P2-D governed semantic suggestion APIs", () => {
     expect(metric!.suggestion.openQuestions.length).toBeGreaterThan(0);
     expect((metric!.suggestion.contract.defaultFilters as unknown[])).toEqual([]);
 
+    // The generated candidate names are intentionally stable (for example,
+    // products_price). Scope the accepted Draft to this suggestion run so a
+    // rerun against a retained disposable D1 cannot collide with an earlier
+    // test-created asset. The production uniqueness constraint remains active.
+    const fixtureCanonicalName = `${metric!.suggestion.canonicalName}_run_${generation.runId.replace(/-/gu, "").slice(0, 12)}`;
     const reviewedDefinition = `${metric!.suggestion.definition} Reviewed by the semantic owner.`;
-    const reviewedContract = { ...metric!.suggestion.contract, definition: reviewedDefinition };
-    const accepted = await ownerApi.post(absoluteUrl(`/api/v1/semantics/suggestions/${metric!.suggestionId}/accept-as-draft`), { data: { canonicalName: metric!.suggestion.canonicalName, displayName: metric!.suggestion.displayName, domain: reviewedContract.domain, description: "Created from an AI suggestion after human review.", contract: reviewedContract, aliases: metric!.suggestion.aliases, changeReason: "Reviewed P2-D suggestion." } });
+    const reviewedContract = { ...metric!.suggestion.contract, canonicalName: fixtureCanonicalName, definition: reviewedDefinition };
+    const accepted = await ownerApi.post(absoluteUrl(`/api/v1/semantics/suggestions/${metric!.suggestionId}/accept-as-draft`), { data: { canonicalName: fixtureCanonicalName, displayName: metric!.suggestion.displayName, domain: reviewedContract.domain, description: "Created from an AI suggestion after human review.", contract: reviewedContract, aliases: metric!.suggestion.aliases, changeReason: "Reviewed P2-D suggestion." } });
     expect(accepted.status(), await accepted.text()).toBe(201);
     const acceptedBody = await accepted.json() as { status: string; assetId: string; revisionId: string; draftStatus: string };
     expect(acceptedBody).toMatchObject({ status: "ACCEPTED", draftStatus: "DRAFT" });
