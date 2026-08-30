@@ -37,6 +37,7 @@ Chat, Direct Query, P0 QueryPolicyEngine, or P2-F runtime semantic injection.
 | Migration immutability | PASS; protected `0006`–`0012` hashes |
 | P2-E governance API tests | PASS; 2/2 |
 | Full product/security/UI regression | PASS; 119/119 |
+| Fresh clone | PASS; `npm ci` (0 vulnerabilities), check, migration rehearsal, and 119/119 |
 
 ## Production guardrails and next operation
 
