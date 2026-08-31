@@ -1,12 +1,18 @@
 # QueryMind Cloudflare D1 + OpenAI 重構追蹤表
 
+## 2026-08-31: P2-G semantic evidence hook production release
+
+| ID | Status | Delivered | Verification / current state |
+|---|---|---|---|
+| P2-G | Complete — deployed / activation disabled | Additive `semanticEvidence` provenance is recorded from the exact P2-F resolver handoff in the existing `query_runs.explainability_json`; `USED` is emitted only for successful governed executions with immutable selected asset/revision identity, while feature-off, empty/fallback, ambiguous, Direct Query, and historical-no-field cases remain explicit and non-invented. P0/P1/P1.2/P2-A–F boundaries, QueryPolicyEngine, DLP, RBAC, and feedback behavior are unchanged. No migration or production semantic asset was created. | Worker `2ae1d74d-db8f-4acf-84be-bc863d89ba48`; rollback `9b2cc079-066f-4df0-b9aa-e2d10a910f2f`; APP `0001`–`0012`, DATA `0001`; schema snapshot `9fc08cbf8ee017c5f6041f7eaa6b7a0b0411b185f4d7e503e0ca47ecdc3b49d3`; P0 policies `72`; registry/assets/revisions/reviews/publications/approvals/authorities `0/0/0/0/0/0/0`; `SEMANTIC_RUNTIME_CONTEXT_ENABLED=false`; production public smoke PASS; anonymous schema denial 401; evidence NOT_USED baseline PASS. Local unit `110/110`, E2E `20/20`, full `132/132`, fresh-clone install/typecheck/migration/unit PASS, and GitHub Actions `33392905579` PASS. Manifest: `docs/releases/manifests/p2-g-production.json`. Authenticated production replay was not executed without a supplied session; prior P2-F operator gate retained. |
+
 ## 2026-08-31: P2-F approved runtime semantic context production freeze
 
 | ID | Status | Delivered | Verification / current state |
 |---|---|---|---|
 | GAP-033 | Closed | P2-E authenticated production closeout is authoritative PASS: existing session, Registry, fail-closed authority, non-implicit Owner/DBA approval, and canonical P1 query verified without fake production mutation. | P2-E is `COMPLETE / PRODUCTION BASELINE ESTABLISHED`. |
 | GAP-034 | Closed | Retained-local D1 bootstrap lifecycle issue was fixed and P2-F release quality is green. | P2-F unit `106/106`, E2E `20/20`, full `128/128`, fresh clone and GitHub Actions `33352997498` / `33353180460` PASS. |
-| P2-F | Complete — deployed / activation disabled | Read-only `ApprovedSemanticContextResolver` deploys after EffectiveScope and Authorized Catalog and before model egress; P0 QueryPolicyEngine and DLP stay final authorities. | Worker `9b2cc079-066f-4df0-b9aa-e2d10a910f2f`; immediate rollback `24622697-5acd-48ef-bbc8-58016589e129`; APP `0001`–`0012`, DATA `0001`, no pending migrations, snapshot `9fc08cbf8ee017c5f6041f7eaa6b7a0b0411b185f4d7e503e0ca47ecdc3b49d3`, P0 policy `72`, registry/assets/revisions/reviews/publications/approvals/authorities `0/0/0/0/0/0/0`. Public smoke PASS. `SEMANTIC_RUNTIME_CONTEXT_ENABLED=false` by strict default (binding absent); empty registry P1 fallback PASS; no semantic/D1/query-registry mutation. P2-G not started. |
+| P2-F | Complete — deployed / activation disabled | Read-only `ApprovedSemanticContextResolver` deploys after EffectiveScope and Authorized Catalog and before model egress; P0 QueryPolicyEngine and DLP stay final authorities. | Worker `9b2cc079-066f-4df0-b9aa-e2d10a910f2f`; immediate rollback `24622697-5acd-48ef-bbc8-58016589e129`; APP `0001`–`0012`, DATA `0001`, no pending migrations, snapshot `9fc08cbf8ee017c5f6041f7eaa6b7a0b0411b185f4d7e503e0ca47ecdc3b49d3`, P0 policy `72`, registry/assets/revisions/reviews/publications/approvals/authorities `0/0/0/0/0/0/0`. Public smoke PASS. `SEMANTIC_RUNTIME_CONTEXT_ENABLED=false` by strict default (binding absent); empty registry P1 fallback PASS; no semantic/D1/query-registry mutation. Superseded in production by P2-G evidence hook; worker-only rollback remains available. |
 
 ## 2026-08-30: P2-E human approval & publication governance
 

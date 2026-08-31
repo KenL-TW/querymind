@@ -25,9 +25,19 @@ asset, authorization rule, model prompt, or feedback taxonomy was changed.
 ## Database and deployment
 
 The release target is APP migrations 0001–0012 and DATA migration 0001. No
-0013 migration exists or is required. Production deployment evidence and exact
-test/Worker identifiers are recorded in the P2-G release manifest when the
-release gates complete.
+0013 migration exists or is required. Release gates completed on 2026-08-31.
+Worker `2ae1d74d-db8f-4acf-84be-bc863d89ba48` is live at
+`https://querymind.digitalaaronl.workers.dev`, with rollback Worker
+`9b2cc079-066f-4df0-b9aa-e2d10a910f2f`. The exact immutable deployment and
+verification record is [the P2-G production manifest](manifests/p2-g-production.json).
+
+Production D1 was read-only verified after deployment: APP migrations 0001–0012
+and DATA migration 0001 are applied, registry version is 0, semantic assets,
+revisions, reviews, publications, approvals, and authorities are all 0, and no
+remote rows were written. Public `/` and `/health` smoke passed; anonymous
+protected schema access returned 401. The authenticated operator smoke was not
+replayed because no production session was supplied; the prior P2-F operator
+gate remains authoritative.
 
 ## Rollback
 
