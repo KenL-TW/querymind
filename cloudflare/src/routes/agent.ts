@@ -280,7 +280,7 @@ async function runAgent(env: Env, prepared: PreparedChat): Promise<AgentResult> 
     if (!answer || final.tool_calls?.length) throw new HttpError(502, "AI_INVALID_RESPONSE", "AI did not return a final answer after the query.");
     const queryRunId = crypto.randomUUID();
     const rawSqlAvailable = hasCapability(prepared.user, "view_schema");
-    const explainability = buildQueryExplainability({ prompt: prepared.prompt, sql: validated.originalSql, scope: prepared.scope, referencedTables: validated.referencedTables, rowCount: masked.rows.length, truncated: masked.rows.length >= validated.rowCap, maskedColumns: masked.maskedColumns, queryRunId, rawSqlAvailable });
+    const explainability = buildQueryExplainability({ prompt: prepared.prompt, sql: validated.originalSql, scope: prepared.scope, referencedTables: validated.referencedTables, rowCount: masked.rows.length, truncated: masked.rows.length >= validated.rowCap, maskedColumns: masked.maskedColumns, queryRunId, rawSqlAvailable, semanticContext: prepared.semanticContext });
     const result: AgentResult = { answer, ...(rawSqlAvailable ? { sql: validated.originalSql } : {}), queryRunId, explainability, rows: masked.rows, rowCount: masked.rows.length, maskedColumns: masked.maskedColumns, model: prepared.model };
     assertApiResultBudget(result);
     await persistSuccess(env, prepared, result, providerRequests, { sql: validated.originalSql, queryRunId, explainability });

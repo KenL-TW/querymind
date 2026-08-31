@@ -3152,6 +3152,23 @@ td select,
 .evidence-feedback { border: 0; padding: 2px 4px; color: var(--blue-700, #2468a8); background: transparent; font-size: 11px; white-space: nowrap; cursor: pointer; }
 .evidence-feedback:hover, .evidence-feedback:focus-visible { text-decoration: underline; }
 .explain-calc-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.semantic-evidence { border-top: 1px solid var(--line, #dfe5ec); padding: 16px 18px; background: color-mix(in srgb, var(--surface, #fff) 92%, #edf7f2); }
+.semantic-evidence > p { margin: 7px 0 0; color: var(--text-soft, #4d5a68); font-size: 13px; }
+.semantic-evidence-legacy { background: var(--surface-muted, #f2f5f8); }
+.semantic-evidence-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.semantic-evidence-head b { display: block; margin-top: 4px; font-size: 13px; }
+.semantic-evidence-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 10px; margin-top: 12px; }
+.semantic-evidence-card { padding: 12px; border: 1px solid var(--line, #dfe5ec); border-radius: 10px; background: var(--surface, #fff); }
+.semantic-evidence-card b, .semantic-evidence-card small { display: block; overflow-wrap: anywhere; }
+.semantic-evidence-card small { margin-top: 3px; color: var(--muted, #657386); font-size: 11px; }
+.semantic-evidence-card p { display: grid; grid-template-columns: 54px minmax(0, 1fr); gap: 8px; margin: 9px 0 0; color: var(--text-soft, #4d5a68); font-size: 12px; overflow-wrap: anywhere; }
+.semantic-evidence-card p span { color: var(--muted, #657386); font-size: 11px; }
+.semantic-evidence-card details { margin-top: 10px; }
+.semantic-evidence-card summary { color: var(--accent, #2457d6); font-size: 11px; cursor: pointer; }
+.semantic-evidence-card dl { display: grid; gap: 5px; margin: 8px 0 0; font-size: 10px; }
+.semantic-evidence-card dl div { display: grid; grid-template-columns: 82px minmax(0, 1fr); gap: 6px; }
+.semantic-evidence-card dt { color: var(--muted, #657386); }
+.semantic-evidence-card dd { margin: 0; overflow-wrap: anywhere; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; }
 @media (max-width: 860px) { .explain-grid { grid-template-columns: 1fr; } .feedback-negative { grid-template-columns: 1fr; } .query-feedback { margin-inline: 10px; } }
 
 /* P2-C semantic governance is a design-time surface: metadata only, no result data or SQL. */

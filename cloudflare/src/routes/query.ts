@@ -101,7 +101,8 @@ export async function executeQuery(request: Request, env: Env): Promise<Response
     const durationMs = Date.now() - startedAt;
     const runId = crypto.randomUUID();
     const allowRawSql = hasCapability(user, "view_schema");
-    const explainability = buildQueryExplainability({ prompt, sql: validated.originalSql, scope, referencedTables: validated.referencedTables, rowCount: rows.length, truncated: rows.length >= validated.rowCap, maskedColumns: masked.maskedColumns, queryRunId: runId, rawSqlAvailable: allowRawSql });
+    // Direct Query is governed but never consumes P2-F semantic model context.
+    const explainability = buildQueryExplainability({ prompt, sql: validated.originalSql, scope, referencedTables: validated.referencedTables, rowCount: rows.length, truncated: rows.length >= validated.rowCap, maskedColumns: masked.maskedColumns, queryRunId: runId, rawSqlAvailable: allowRawSql, semanticEvidenceMode: "NOT_USED" });
     const payload = { rows: masked.rows, rowCount: rows.length, rowCap: validated.rowCap, maskedColumns: masked.maskedColumns, durationMs, queryRunId: runId, explainability, ...(allowRawSql ? { sql: validated.originalSql } : {}) };
     assertApiResultBudget(payload);
     await recordQueryRun(env, { sessionId, userId: user.id, prompt, generatedSql: validated.originalSql, rowCount: rows.length, durationMs, outcome: "success", errorCode: null, result: masked, rowCap: validated.rowCap, explainability, allowRawSql, runId });

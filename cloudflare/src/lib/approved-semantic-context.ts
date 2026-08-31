@@ -1,7 +1,7 @@
 import type { AuthorizedSchemaCatalog } from "./schema-catalog";
 import type { EffectiveScope } from "./scope";
 import { validateContract } from "./semantic-validation";
-import type { NormalizedSemanticSource, SemanticAssetType, SemanticContract } from "./semantic-types";
+import type { MetricExpression, NormalizedSemanticSource, SemanticAssetType, SemanticContract } from "./semantic-types";
 
 /** This version is part of the future cache key and telemetry contract. */
 export const APPROVED_SEMANTIC_CONTEXT_CONTRACT_VERSION = "p2-f-v1";
@@ -26,8 +26,24 @@ export interface SemanticContextCandidate {
   domain: string;
 }
 
+export interface SemanticEvidenceSource {
+  table: string;
+  column?: string;
+}
+
+/**
+ * A bounded, immutable projection of the exact object supplied to the model.
+ * It is observational only: P2-G stores it after a successful governed run and
+ * it is never read by authorization, planning, or the resolver.
+ */
 export interface SelectedSemanticProvenance extends SemanticContextCandidate {
   schemaSnapshotId: string;
+  canonicalName: string;
+  sources: SemanticEvidenceSource[];
+  grain?: string;
+  metricAstSummary?: string;
+  relationshipRefs?: string[];
+  definition?: string;
 }
 
 export interface ResolvedSemanticContext {
@@ -132,6 +148,56 @@ function requestedDomain(candidates: Candidate[], prompt: string): string | null
 
 function safeJson(value: unknown): string {
   return JSON.stringify(value).replace(/[&<>]/gu, (character) => character === "&" ? "\\u0026" : character === "<" ? "\\u003c" : "\\u003e");
+}
+
+function metricExpressionSummary(expression: MetricExpression, depth = 0): string {
+  if (depth > 6) return "…";
+  if (expression.kind === "COLUMN") return `${expression.source.table}.${expression.source.column}`;
+  if (expression.kind === "LITERAL") return String(expression.value);
+  if (expression.kind === "COUNT") return expression.mode === "ROWS" ? "COUNT(*)" : `COUNT(${expression.source.table}.${expression.source.column})`;
+  if (expression.kind === "COUNT_DISTINCT") return `COUNT DISTINCT ${expression.source.table}.${expression.source.column}`;
+  if (expression.kind === "SUM" || expression.kind === "AVG" || expression.kind === "MIN" || expression.kind === "MAX") return `${expression.kind}(${metricExpressionSummary(expression.argument, depth + 1)})`;
+  if (expression.kind === "ADD" || expression.kind === "SUBTRACT" || expression.kind === "MULTIPLY" || expression.kind === "DIVIDE") {
+    const operators: Record<typeof expression.kind, string> = { ADD: "+", SUBTRACT: "−", MULTIPLY: "×", DIVIDE: "÷" };
+    return `(${metricExpressionSummary(expression.left, depth + 1)} ${operators[expression.kind]} ${metricExpressionSummary(expression.right, depth + 1)})`;
+  }
+  return "bounded expression";
+}
+
+function grainSummary(contract: Extract<SemanticContract, { nativeGrain?: unknown }>): string | undefined {
+  const grain = contract.nativeGrain;
+  if (!grain) return undefined;
+  return grain.kind === "ENTITY" ? grain.key.slice(0, 120) : `${grain.key} (${grain.timeUnit})`.slice(0, 120);
+}
+
+function evidenceSelection(candidate: Candidate, schemaSnapshotId: string): SelectedSemanticProvenance {
+  const physicalSources = candidate.sources
+    .filter((source) => source.source_kind !== "SEMANTIC_DEPENDENCY" && Boolean(source.table_name))
+    .slice(0, SEMANTIC_CONTEXT_LIMITS.dependenciesPerAsset)
+    .map((source) => ({ table: source.table_name as string, ...(source.column_name ? { column: source.column_name } : {}) }));
+  const base: SelectedSemanticProvenance = {
+    assetId: candidate.asset_id,
+    revisionId: candidate.revision_id,
+    assetType: candidate.asset_type,
+    label: candidateLabel(candidate).slice(0, 160),
+    canonicalName: candidate.canonical_name.slice(0, 160),
+    domain: candidate.domain.slice(0, 120),
+    schemaSnapshotId,
+    sources: physicalSources,
+  };
+  if (candidate.asset_type === "METRIC") {
+    const contract = candidate.contract as Extract<SemanticContract, { expression: MetricExpression; nativeGrain: unknown }>;
+    return { ...base, grain: grainSummary(contract), metricAstSummary: metricExpressionSummary(contract.expression).slice(0, 500) };
+  }
+  if (candidate.asset_type === "DIMENSION") {
+    const contract = candidate.contract as Extract<SemanticContract, { nativeGrain?: unknown }>;
+    return { ...base, grain: grainSummary(contract) };
+  }
+  if (candidate.asset_type === "RELATIONSHIP") {
+    const contract = candidate.contract as Extract<SemanticContract, { joinKeys: Array<{ leftTable: string; leftColumn: string; rightTable: string; rightColumn: string }> }>;
+    return { ...base, relationshipRefs: contract.joinKeys.slice(0, SEMANTIC_CONTEXT_LIMITS.relationshipExpansions).map((key) => `${key.leftTable}.${key.leftColumn} → ${key.rightTable}.${key.rightColumn}`.slice(0, 240)) };
+  }
+  return { ...base, definition: candidate.contract.definition.slice(0, 280) };
 }
 
 function projection(candidate: Candidate, schemaSnapshotId: string): Record<string, unknown> {
@@ -254,7 +320,7 @@ export async function resolveApprovedSemanticContext(input: { database: D1Databa
     registryVersion: firstVersion,
     schemaSnapshotId: input.catalog.schemaSnapshotId,
     modelContext: serialized,
-    selected: selected.map((candidate) => ({ ...toPublic(candidate), schemaSnapshotId: input.catalog.schemaSnapshotId })),
+    selected: selected.map((candidate) => evidenceSelection(candidate, input.catalog.schemaSnapshotId)),
     candidates: [],
     candidateCount: valid.length,
     excludedCount,

@@ -84,6 +84,7 @@ test.describe("P2-F ApprovedSemanticContextResolver", () => {
     expect(result.modelContext).toContain("allowedOperations");
     expect(result.modelContext).toContain("order_total");
     expect(result.modelContext).not.toContain("scopeKey");
+    expect(result.selected[0]).toMatchObject({ assetId: "asset-sales", revisionId: "revision-sales", assetType: "DIMENSION", canonicalName: "order_total", schemaSnapshotId: snapshot, sources: [{ table: "orders", column: "total" }] });
   });
 
   test("excludes an otherwise approved semantic whose source column is not in the authorized catalog", async () => {

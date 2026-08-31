@@ -1,4 +1,28 @@
 import type { EffectiveScope } from "./scope";
+import type { ResolvedSemanticContext, SelectedSemanticProvenance } from "./approved-semantic-context";
+
+export const SEMANTIC_EVIDENCE_LIMITS = { selections: 8, sourcesPerSelection: 8, relationshipRefs: 4, serializedBytes: 8_000 } as const;
+
+export interface SemanticEvidenceSelection {
+  assetId: string;
+  revisionId: string;
+  semanticType: "TERM" | "DIMENSION" | "METRIC" | "RELATIONSHIP";
+  canonicalName: string;
+  label: string;
+  domain: string;
+  grain?: string;
+  metricAstSummary?: string;
+  sources: Array<{ table: string; column?: string }>;
+  relationshipRefs?: string[];
+  definition?: string;
+}
+
+export interface SemanticEvidence {
+  mode: "USED" | "NOT_USED";
+  registryVersion: number | null;
+  schemaSnapshotId: string | null;
+  selections: SemanticEvidenceSelection[];
+}
 
 export interface QueryUnderstanding {
   intent: string;
@@ -40,6 +64,8 @@ export interface QueryExplainability {
   };
   summary: QueryResultSummary;
   feedback: { supported: true; queryRunId: string };
+  /** P2-G output provenance. Missing means the QueryRun predates this release. */
+  semanticEvidence?: SemanticEvidence;
 }
 
 interface BuildInput {
@@ -52,6 +78,36 @@ interface BuildInput {
   maskedColumns: string[];
   queryRunId: string;
   rawSqlAvailable: boolean;
+  semanticContext?: ResolvedSemanticContext | null;
+  semanticEvidenceMode?: "NOT_USED";
+}
+
+function compactText(value: string, max: number): string { return value.replace(/\s+/gu, " ").trim().slice(0, max); }
+
+function selectionSnapshot(selection: SelectedSemanticProvenance): SemanticEvidenceSelection {
+  return {
+    assetId: selection.assetId,
+    revisionId: selection.revisionId,
+    semanticType: selection.assetType,
+    canonicalName: compactText(selection.canonicalName, 160),
+    label: compactText(selection.label, 160),
+    domain: compactText(selection.domain, 120),
+    sources: selection.sources.slice(0, SEMANTIC_EVIDENCE_LIMITS.sourcesPerSelection).map((source) => ({ table: compactText(source.table, 120), ...(source.column ? { column: compactText(source.column, 120) } : {}) })),
+    ...(selection.grain ? { grain: compactText(selection.grain, 120) } : {}),
+    ...(selection.metricAstSummary ? { metricAstSummary: compactText(selection.metricAstSummary, 500) } : {}),
+    ...(selection.relationshipRefs ? { relationshipRefs: selection.relationshipRefs.slice(0, SEMANTIC_EVIDENCE_LIMITS.relationshipRefs).map((item) => compactText(item, 240)) } : {}),
+    ...(selection.definition ? { definition: compactText(selection.definition, 280) } : {}),
+  };
+}
+
+/** Semantic Evidence is observational, not authoritative. */
+export function semanticEvidenceForRun(context: ResolvedSemanticContext | null | undefined, forcedMode?: "NOT_USED"): SemanticEvidence {
+  if (forcedMode === "NOT_USED" || context?.status !== "READY" || context.selected.length === 0) return { mode: "NOT_USED", registryVersion: null, schemaSnapshotId: null, selections: [] };
+  const evidence: SemanticEvidence = { mode: "USED", registryVersion: context.registryVersion, schemaSnapshotId: context.schemaSnapshotId, selections: context.selected.slice(0, SEMANTIC_EVIDENCE_LIMITS.selections).map(selectionSnapshot) };
+  if (new TextEncoder().encode(JSON.stringify(evidence)).byteLength > SEMANTIC_EVIDENCE_LIMITS.serializedBytes) {
+    throw new Error("semantic evidence exceeds bounded storage contract");
+  }
+  return evidence;
 }
 
 const LABELS: Record<string, string> = {
@@ -226,6 +282,7 @@ export function buildQueryExplainability(input: BuildInput): QueryExplainability
   ], 3);
   const sql = input.sql.trim();
   const rawSqlAvailable = input.rawSqlAvailable && Boolean(sql);
+  const semanticEvidence = semanticEvidenceForRun(input.semanticContext, input.semanticEvidenceMode);
   return {
     version: "p1",
     queryRunId: input.queryRunId,
@@ -238,5 +295,6 @@ export function buildQueryExplainability(input: BuildInput): QueryExplainability
     explanation: { business, rawSqlAvailable, ...(rawSqlAvailable ? { sql } : {}) },
     summary: { headline: `查詢完成，共 ${input.rowCount} 筆結果`, highlights, caveats },
     feedback: { supported: true, queryRunId: input.queryRunId },
+    semanticEvidence,
   };
 }
