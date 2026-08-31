@@ -3277,5 +3277,14 @@ td select,
 .semantic-ready-note { padding: 10px 11px; border-left: 3px solid var(--teal-600); color: var(--teal-800); background: #f1faf8; }
 .semantic-emergency-note { margin-top: 10px !important; padding: 10px 11px; border: 1px solid #edcfad; border-radius: 7px; color: #824e0b !important; background: #fff8ed; }
 .semantic-ai-boundary { padding-top: 11px; border-top: 1px solid var(--line-soft); color: var(--ink-500) !important; font-size: 10px !important; }
+.semantic-runtime-readiness { margin: 18px 0; padding: 18px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface-subtle); }
+.semantic-runtime-readiness > header { display: flex; gap: 16px; justify-content: space-between; align-items: flex-start; }
+.semantic-runtime-readiness h3 { margin: 3px 0 6px; }
+.semantic-runtime-readiness p { margin: 0; color: var(--ink-600); }
+.semantic-runtime-readiness dl { display: grid; grid-template-columns: repeat(auto-fit, minmax(145px, 1fr)); gap: 10px; margin: 16px 0 0; }
+.semantic-runtime-readiness dl div { padding: 10px; border-radius: 10px; background: var(--surface); }
+.semantic-runtime-readiness dl span, .semantic-runtime-readiness dl small { display: block; color: var(--ink-500); font-size: 9px; }
+.semantic-runtime-readiness dl b { display: block; margin: 3px 0; }
+.semantic-runtime-blockers { margin-top: 12px !important; font-weight: 700; }
 @media (max-width: 1080px) { .semantic-filter-bar { grid-template-columns: minmax(200px, 1fr) repeat(2, minmax(120px, .5fr)); } .semantic-filter-bar .semantic-domain-filter { grid-column: auto; } }
 @media (max-width: 760px) { .semantic-detail-head, .semantic-pagination, .semantic-suggestion-card > header, .semantic-suggestion-card > footer { align-items: stretch; flex-direction: column; } .semantic-actions { justify-content: flex-start; } .semantic-detail-grid, .suggestion-uncertainty { grid-template-columns: 1fr; } .semantic-definition-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .semantic-inline-fields, .semantic-filter-bar, .suggestion-table-options { grid-template-columns: 1fr; } .semantic-repeat-row { grid-template-columns: 1fr 34px; } .semantic-repeat-row > label:first-child { grid-column: 1 / -1; } .semantic-source-list > div { grid-template-columns: 1fr; } .semantic-source-list small { text-align: left; } }

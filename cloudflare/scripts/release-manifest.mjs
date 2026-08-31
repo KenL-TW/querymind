@@ -16,7 +16,7 @@ export function validateReleaseManifest(value) {
   if (value.phase === "P1.2") return validateP12ReleaseManifest(value);
   const requiredStrings = ["releaseId", "phase", "gitSha", "workerVersionId", "previousWorkerVersionId", "appMigration", "dataMigration", "schemaSnapshotId", "policyVersion", "modelProvider", "gateway", "byokAlias", "releasedAt", "rollbackWorker", "environment"];
   for (const key of requiredStrings) if (typeof value[key] !== "string" || !value[key].trim()) fail(`${key} is required`);
-  if (!["P2-D", "P2-F", "P2-G"].includes(value.phase)) fail("phase must be P2-D, P2-F, or P2-G");
+  if (!["P2-D", "P2-F", "P2-G", "P2-H"].includes(value.phase)) fail("phase must be P2-D, P2-F, P2-G, or P2-H");
   if (!sha.test(value.gitSha)) fail("gitSha must be a 40-character SHA");
   for (const key of ["workerVersionId", "previousWorkerVersionId", "rollbackWorker"]) if (!workerId.test(value[key])) fail(`${key} must be a Worker version ID`);
   for (const key of ["appMigration", "dataMigration"]) if (!migration.test(value[key])) fail(`${key} must be a four-digit migration`);

@@ -71,6 +71,17 @@ test.describe("governed query safety core", () => {
     expect(() => authorizeReadOnlySql("SELECT * FROM orders CROSS JOIN products", 100, governedViewer, governedCatalog)).toThrow();
     expect(() => authorizeReadOnlySql("SELECT orders.id, products.name FROM orders, products", 100, governedViewer, governedCatalog)).toThrow();
   });
+
+  test("keeps adversarial aliases, CTEs, subqueries, quoted identifiers and functions inside the same policy boundary", () => {
+    for (const sql of [
+      "SELECT e.salary FROM employees e",
+      "WITH visible AS (SELECT id FROM orders) SELECT (SELECT salary FROM employees) FROM visible",
+      "SELECT id FROM orders UNION SELECT salary FROM employees",
+      "SELECT lower([employees].[salary]) FROM [employees]",
+      "SELECT id FROM orders /* hidden */",
+      "SELECT id FROM orders -- hidden",
+    ]) expect(() => authorizeReadOnlySql(sql, 100, governedViewer, governedCatalog)).toThrow();
+  });
 });
 
 test.describe("production configuration fail-closed gate", () => {

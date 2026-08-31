@@ -14,6 +14,7 @@ import { submitQueryFeedback } from "./routes/feedback";
 import { acceptInvitation, invitationPreview } from "./routes/invitations";
 import { approveSemanticApi, createSemantic, createSemanticRevisionApi, emergencyPublishSemanticApi, getSemantic, listSemanticReviews, listSemanticRevisions, listSemantics, patchSemanticRevision, postReviewSemanticApi, rejectSemanticApi, requestSemanticChangesApi, resumeSemanticRuntimeApi, semanticApprovalHistory, semanticApprovalReadiness, semanticGovernanceAuthorities, semanticGovernanceConfig, submitSemanticReview, suspendSemanticRuntimeApi } from "./routes/semantics";
 import { acceptSemanticSuggestionAsDraftApi, dismissSemanticSuggestion, generateSemanticSuggestions, getSemanticSuggestion, listSemanticSuggestions, semanticSuggestionCatalog } from "./routes/semantic-suggestions";
+import { semanticRuntimeReadiness } from "./routes/semantic-runtime-readiness";
 import { adminOverview, auditLog, connectionInfo, createApiKey, createInsight, createInvitation, createTemplate, dashboard, deleteDictionary, deleteInsight, deleteTemplate, exportCsv, listApiKeys, listDictionary, listInsights, listInvitations, listRoles, listTemplates, listUsers, resetUserPassword, revokeApiKey, revokeInvitation, saveDictionary, systemInfo, updateInsight, updateRole, updateTemplate, updateUser } from "./routes/modules";
 
 type HealthDatabase = "ok" | "unavailable";
@@ -103,6 +104,7 @@ async function route(request: Request, env: Env): Promise<Response> {
   if (request.method === "GET" && url.pathname === "/api/v1/schema") return getSchema(request, env);
   if (request.method === "POST" && url.pathname === "/api/v1/schema/refresh") return refreshSchema(request, env);
   if (request.method === "GET" && url.pathname === "/api/v1/semantics") return listSemantics(request, env);
+  if (request.method === "GET" && url.pathname === "/api/v1/admin/semantic-runtime/readiness") return semanticRuntimeReadiness(request, env);
   if (request.method === "POST" && url.pathname === "/api/v1/semantics") return createSemantic(request, env);
   if ((request.method === "GET" || request.method === "POST") && url.pathname === "/api/v1/semantics/governance/policies") return semanticGovernanceConfig(request, env);
   if (request.method === "POST" && url.pathname === "/api/v1/semantics/governance/authorities") return semanticGovernanceAuthorities(request, env);
