@@ -13,6 +13,7 @@ QueryMind is a governed AI data-query application. Production is the Cloudflare 
 | APP/DATA migrations | `cloudflare/migrations/app`, `cloudflare/migrations/data` |
 | Semantic Registry | `semantic-*.ts`, `routes/semantics.ts` |
 | P2-E human approval/publication | `semantic-governance.ts`, `routes/semantics.ts`, APP migration `0012_semantic_approval_publication.sql` |
+| P2-F runtime semantic context | `approved-semantic-context.ts`, `routes/agent.ts`, P2-F release and GAP-034 records |
 | P2-D suggestions | `semantic-intelligence*.ts`, `semantic-suggestion-*.ts`, `routes/semantic-suggestions.ts` |
 | AI configuration | `ai-config.ts`, `runtime-config.ts`, `production-runtime-contract.json` |
 | Tests | `cloudflare/tests/*.spec.ts` |
@@ -27,6 +28,7 @@ QueryMind is a governed AI data-query application. Production is the Cloudflare 
 - Release evidence: [P2-D manifest](releases/manifests/p2-d-production.json)
 - P1.2 release evidence: [Feedback & Trust manifest](releases/manifests/p1.2-feedback-trust.json)
 - Release-quality closeout: [P2-E production release and authenticated closeout](releases/p2-e-human-semantic-approval-publication.md)
+- P2-F release-quality evidence: [Approved runtime semantic context](releases/p2-f-approved-runtime-semantic-context.md)
 
 P1.2 feedback is a query-run-linked capture boundary. It validates evidence
 targets against persisted Explainability, preserves owner-only successful-run
@@ -49,7 +51,7 @@ The D1 initializer is disposable and local. D1 migrations are explicit, reviewed
 
 ## What comes next and what is forbidden
 
-P2-E is implemented and deployed as a design-time governance boundary: human-only RACI, deterministic policy/readiness, quorum and separation-of-duties checks, atomic normal or break-glass publication, immutable evidence, and suspend/resume eligibility. It does not inject semantics into Chat/Direct Query; P2-F is not started. Production currently has no semantic assets, policies, or authorities; authenticated operator readiness smoke remains the only closeout gate.
+P2-E is implemented and deployed as a design-time governance boundary: human-only RACI, deterministic policy/readiness, quorum and separation-of-duties checks, atomic normal or break-glass publication, immutable evidence, and suspend/resume eligibility. P2-F runtime context is implemented and release-quality green, but production deployment remains blocked by the P2-E authenticated operator closeout. Production currently has no semantic assets, policies, or authorities.
 
 Do not add LLM-based authorization, direct `QUERYMIND_DATA` execution, full-schema exposure before EffectiveScope, runtime semantic consumption, AI semantic approval, AI-generated row policy, or write-enabled AI SQL.
 

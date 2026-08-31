@@ -195,6 +195,34 @@ export async function authorizedSchemaCatalog(env: Env, scope: EffectiveScope): 
   return { schemaSnapshotId, tables, foreignKeys };
 }
 
+/**
+ * Serializes the already scope-filtered catalog for the existing P1 model
+ * prompt. Keeping this projection separate from the catalog reader prevents
+ * a caller from accidentally rebuilding an unscoped schema string after it
+ * has obtained an authorized catalog.
+ */
+export function authorizedCatalogContext(catalog: AuthorizedSchemaCatalog): string {
+  const lines = catalog.tables.map((table) => {
+    const columns = table.columns.map((column) => `${column.name}${column.primaryKey ? " PK" : ""} ${column.dataType}`).join(", ");
+    const relationships = catalog.foreignKeys
+      .filter((foreignKey) => foreignKey.table === table.name)
+      .map((foreignKey) => `${foreignKey.column} -> ${foreignKey.referencedTable}.${foreignKey.referencedColumn}`)
+      .join(", ");
+    return `${table.name}(${columns})${relationships ? ` FK[${relationships}]` : ""}`;
+  });
+  const context: string[] = [];
+  let length = 0;
+  for (const line of lines) {
+    if (length + line.length + 1 > MAX_SCHEMA_CONTEXT_CHARACTERS) {
+      context.push("[Schema catalog truncated at safe context limit]");
+      break;
+    }
+    context.push(line);
+    length += line.length + 1;
+  }
+  return context.join("\n");
+}
+
 export async function schemaContext(env: Env, scope?: EffectiveScope): Promise<string> {
   const tables = (await env.QUERYMIND_APP.prepare("SELECT table_name, description FROM schema_catalog_tables ORDER BY table_name").all<{ table_name: string; description: string }>()).results ?? [];
   if (tables.length === 0) throw new HttpError(409, "SCHEMA_CATALOG_EMPTY", "Schema catalog is empty. Refresh it before using the AI agent.");

@@ -1,6 +1,6 @@
 # QueryMind P2-F — Approved Runtime Semantic Context
 
-**Status:** implementation-ready design only. P2-F runtime code, migration, prompt change, semantic production mutation, and deployment are explicitly out of scope for this document.
+**Status:** implementation complete and release-quality green; deployment remains gated by P2-E authenticated closeout. P2-F adds no migration and performs no production Semantic mutation.
 
 **Baseline:** P0 Governed Query Safety Core, P1 Explainable Query Experience, P1.2 Feedback & Trust, and P2-A through P2-E. The current Worker remains the source of truth: authentication and feature RBAC precede `resolveEffectiveScope`; authorized schema/catalog retrieval is scope-filtered; Chat/Direct Query still use the P0 `QueryPolicyEngine`; P2-E is design-time governance only.
 
