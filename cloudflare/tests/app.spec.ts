@@ -427,6 +427,12 @@ test.describe("QueryMind product workspace", () => {
       await expect(page.locator('[data-page="semantics"]').first()).toBeVisible();
       await page.locator('[data-page="semantics"]').first().click();
       await expect(page.locator(".topbar h1")).toHaveText("Semantic Registry");
+      const readiness = await page.evaluate(async () => {
+        const response = await fetch("/api/v1/admin/semantic-runtime/readiness");
+        return { status: response.status, body: await response.json() };
+      });
+      expect(readiness.status).toBe(200);
+      expect(readiness.body).toMatchObject({ runtimeCapability: "AVAILABLE", activationCurrentState: "DISABLED", checks: { registry: { status: "NOT_READY", code: "NO_APPROVED_SEMANTIC" } } });
       await expect(page.getByRole("button", { name: "Create Semantic Asset" })).toHaveCount(0);
       await expect(page.getByRole("button", { name: /Submit for Review|Request Changes|Reject/ })).toHaveCount(0);
       const forcedMutationStatus = await page.evaluate(async () => {
