@@ -5,7 +5,7 @@ import type { ResolvedSemanticContext } from "../src/lib/approved-semantic-conte
 
 const snapshot = "a".repeat(64);
 
-function readinessEnv(options: { flag?: string; approved?: number; eligible?: number; invalid?: number; policy?: boolean; snapshot?: boolean } = {}): Env {
+function readinessEnv(options: { flag?: string; approved?: number; eligible?: number; invalid?: number; cycle?: boolean; policy?: boolean; snapshot?: boolean } = {}): Env {
   const first = (sql: string) => {
     if (sql.includes("sqlite_schema") && sql.includes("semantic_assets")) return { total: 6 };
     if (sql.includes("sqlite_schema")) return { total: 14 };
@@ -18,7 +18,7 @@ function readinessEnv(options: { flag?: string; approved?: number; eligible?: nu
     if (sql.includes("data_scope_policies")) return { total: options.policy === false ? 0 : 72 };
     return null;
   };
-  const database = { prepare(sql: string) { const statement = { bind(..._values: unknown[]) { return statement; }, async first<T>() { return first(sql) as T; } }; return statement; } } as unknown as D1Database;
+  const database = { prepare(sql: string) { const statement = { bind(..._values: unknown[]) { return statement; }, async first<T>() { return first(sql) as T; }, async all<T>() { return { results: (options.cycle ? [{ revision_id: "revision-1", referenced_revision_id: "revision-1" }] : []) as T[] }; } }; return statement; } } as unknown as D1Database;
   return { ENVIRONMENT: "local", SEMANTIC_RUNTIME_CONTEXT_ENABLED: options.flag ?? "false", QUERYMIND_APP: database, QUERYMIND_DATA: database } as Env;
 }
 
@@ -40,6 +40,8 @@ test.describe("P2-H Semantic Runtime Activation Readiness", () => {
     const blocked = await semanticRuntimeActivationReadiness(readinessEnv({ approved: 1, invalid: 1 }));
     expect(blocked).toMatchObject({ ready: false, status: "BLOCKED" });
     expect(blocked.checks.dependencies.status).toBe("BLOCKED");
+    const cycle = await semanticRuntimeActivationReadiness(readinessEnv({ approved: 1, cycle: true }));
+    expect(cycle.checks.dependencies).toMatchObject({ status: "BLOCKED", code: "SEMANTIC_DEPENDENCY_CYCLE" });
     const stale = await semanticRuntimeActivationReadiness(readinessEnv({ eligible: 1, approved: 0 }));
     expect(stale.checks.registry).toMatchObject({ status: "NOT_READY", code: "SEMANTIC_SCHEMA_STALE" });
   });
