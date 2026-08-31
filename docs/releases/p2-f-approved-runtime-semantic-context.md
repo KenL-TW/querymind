@@ -42,6 +42,8 @@ logs prompt text, scope keys, source predicates, or semantic payloads.
 - GAP-034 root cause and physical D1 evidence: [GAP-034 record](gap-034-root-cause.md).
 - Migration immutability, release manifests, and production-compatible Worker
   dry-run: PASS.
+- GitHub Actions: PASS, run `33352997498` for commit `b84b2e2` (both
+  `cloudflare-runtime` and `legacy-regression-only`).
 
 ## Deployment decision
 
