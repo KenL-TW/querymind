@@ -7,13 +7,13 @@ const snapshot = "a".repeat(64);
 
 function readinessEnv(options: { flag?: string; approved?: number; eligible?: number; invalid?: number; policy?: boolean; snapshot?: boolean } = {}): Env {
   const first = (sql: string) => {
+    if (sql.includes("sqlite_schema") && sql.includes("semantic_assets")) return { total: 6 };
+    if (sql.includes("sqlite_schema")) return { total: 14 };
     if (sql.includes("semantic_registry_state")) return { registry_version: options.approved ? 4 : 0 };
     if (sql.includes("schema_catalog_state")) return { schema_snapshot_id: options.snapshot === false ? "uninitialized" : snapshot, table_count: 14 };
     if (sql.includes("COUNT(*) AS total FROM semantic_assets") && sql.includes("semantic_sources")) return { total: options.invalid ?? 0 };
     if (sql.includes("COUNT(*) AS total FROM semantic_assets") && sql.includes("schema_catalog_state sc")) return { total: options.approved ?? 0 };
     if (sql.includes("COUNT(*) AS total FROM semantic_assets")) return { total: options.eligible ?? options.approved ?? 0 };
-    if (sql.includes("sqlite_schema") && sql.includes("semantic_assets")) return { total: 6 };
-    if (sql.includes("sqlite_schema")) return { total: 14 };
     if (sql.includes("policy_state")) return { policy_version: options.policy === false ? "" : "p0-governed-query-safety-core-v1", expected_migration: "0006" };
     if (sql.includes("data_scope_policies")) return { total: options.policy === false ? 0 : 72 };
     return null;
