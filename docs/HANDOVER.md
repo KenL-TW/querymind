@@ -21,14 +21,14 @@ QueryMind is a governed AI data-query application. Production is the Cloudflare 
 
 ## Current release
 
-- Production Worker: `24622697-5acd-48ef-bbc8-58016589e129`
-- Rollback Worker: `0adc14e9-6e86-4bbf-93bf-fe476c8f20e4`
+- Production Worker: `9b2cc079-066f-4df0-b9aa-e2d10a910f2f`
+- Rollback Worker: `24622697-5acd-48ef-bbc8-58016589e129`
 - Production baseline is APP migrations `0001`–`0012`; P2-E additive APP migration `0012` is applied; DATA remains `0001`.
 - Current semantic state: registry version 0; no assets, revisions, reviews, or suggestion runs
-- Release evidence: [P2-D manifest](releases/manifests/p2-d-production.json)
+- Release evidence: [P2-F manifest](releases/manifests/p2-f-production.json)
 - P1.2 release evidence: [Feedback & Trust manifest](releases/manifests/p1.2-feedback-trust.json)
 - Release-quality closeout: [P2-E production release and authenticated closeout](releases/p2-e-human-semantic-approval-publication.md)
-- P2-F release-quality evidence: [Approved runtime semantic context](releases/p2-f-approved-runtime-semantic-context.md)
+- P2-F production evidence: [Approved runtime semantic context](releases/p2-f-approved-runtime-semantic-context.md)
 
 P1.2 feedback is a query-run-linked capture boundary. It validates evidence
 targets against persisted Explainability, preserves owner-only successful-run
@@ -51,7 +51,7 @@ The D1 initializer is disposable and local. D1 migrations are explicit, reviewed
 
 ## What comes next and what is forbidden
 
-P2-E is implemented and deployed as a design-time governance boundary: human-only RACI, deterministic policy/readiness, quorum and separation-of-duties checks, atomic normal or break-glass publication, immutable evidence, and suspend/resume eligibility. P2-F runtime context is implemented and release-quality green, but production deployment remains blocked by the P2-E authenticated operator closeout. Production currently has no semantic assets, policies, or authorities.
+P2-E is complete as a design-time governance boundary: human-only RACI, deterministic policy/readiness, quorum and separation-of-duties checks, atomic normal or break-glass publication, immutable evidence, and suspend/resume eligibility. P2-F runtime context is deployed and frozen with semantic activation disabled by its release flag; production currently has no semantic assets, policies, or authorities. P2-G semantic evidence remains a handoff-only next phase.
 
 Do not add LLM-based authorization, direct `QUERYMIND_DATA` execution, full-schema exposure before EffectiveScope, runtime semantic consumption, AI semantic approval, AI-generated row policy, or write-enabled AI SQL.
 

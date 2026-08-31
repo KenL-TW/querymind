@@ -45,14 +45,41 @@ logs prompt text, scope keys, source predicates, or semantic payloads.
 - GitHub Actions: PASS, run `33352997498` for commit `b84b2e2` (both
   `cloudflare-runtime` and `legacy-regression-only`).
 
-## Deployment decision
+## Production deployment and freeze (2026-08-31)
 
-No migration was added. No production Semantic Registry state was created,
-changed, approved, published, suspended, or resumed. Production deployment is
-withheld: P2-E authenticated governance closeout remains BLOCKED even though
-the P2-F release-quality gate is green. The current production Worker
-`24622697-5acd-48ef-bbc8-58016589e129` remains unchanged; its recorded rollback
-Worker is `0adc14e9-6e86-4bbf-93bf-fe476c8f20e4`.
+The P2-E authenticated closeout and GAP-034 are recorded by the release owner
+as PASS/CLOSED. P2-F runtime source
+`fa697520de324fc503ef86ffeb67251217193e99` was deployed to Worker
+`9b2cc079-066f-4df0-b9aa-e2d10a910f2f` at `2026-08-31T10:04:24.538929Z`.
+The immediate rollback Worker is
+`24622697-5acd-48ef-bbc8-58016589e129`.
+
+No migration was added or applied. Remote APP remains `0001`–`0012`, DATA
+remains `0001`, and both ledgers report no pending migration. Public `/` and
+`/health` smoke passed: production environment, AI ready, APP/DATA healthy,
+and P0 policy count `72`. The schema snapshot remains
+`9fc08cbf8ee017c5f6041f7eaa6b7a0b0411b185f4d7e503e0ca47ecdc3b49d3` with
+14 catalog tables and 115 columns.
+
+`SEMANTIC_RUNTIME_CONTEXT_ENABLED` is intentionally absent from the preserved
+production bindings; the strict runtime check treats any value except literal
+`"true"` as `false`. P2-F capability is therefore deployed while semantic
+activation remains disabled. The empty registry fallback uses the existing P1
+path. Operator-authenticated canonical-query evidence is PASS under the closed
+release gate; this release environment did not handle a browser session or any
+credential.
+
+Read-only post-deploy verification recorded registry/assets/revisions/reviews/
+publications/approvals/authorities as `0/0/0/0/0/0/0`, with
+`rows_written=0` and `changed_db=false`. No semantic state, authority, policy,
+user, secret, or QUERYMIND_DATA row changed. Bounded public smoke found no
+schema bootstrap or resolver 5xx; a passive live-log connection returned no
+matching invocation event.
+
+The P2-F production manifest is
+[`p2-f-production.json`](manifests/p2-f-production.json). The release is
+frozen with P0/P1/P2-E boundaries intact. P2-G semantic evidence is not
+implemented.
 
 P2-G semantic evidence and explainability changes are not implemented. P2-F
 retains selected asset/revision/domain/type/version only in request-local state.

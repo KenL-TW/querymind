@@ -2,7 +2,7 @@
 
 ## Release boundary
 
-Production is Worker `querymind` at `https://querymind.digitalaaronl.workers.dev`. The current verified Worker is `24622697-5acd-48ef-bbc8-58016589e129`; the immediate rollback Worker is `0adc14e9-6e86-4bbf-93bf-fe476c8f20e4`.
+Production is Worker `querymind` at `https://querymind.digitalaaronl.workers.dev`. The current verified Worker is `9b2cc079-066f-4df0-b9aa-e2d10a910f2f`; the immediate rollback Worker is `24622697-5acd-48ef-bbc8-58016589e129`.
 
 The Worker runs a static SPA plus two D1 bindings. Production AI uses Cloudflare AI Gateway `querymind-prod` with OpenAI BYOK alias `production`. Keys remain in Cloudflare; never request, print, commit, or pass one on a command line.
 

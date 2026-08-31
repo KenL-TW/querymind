@@ -1,5 +1,13 @@
 # QueryMind Cloudflare D1 + OpenAI 重構追蹤表
 
+## 2026-08-31: P2-F approved runtime semantic context production freeze
+
+| ID | Status | Delivered | Verification / current state |
+|---|---|---|---|
+| GAP-033 | Closed | P2-E authenticated production closeout is authoritative PASS: existing session, Registry, fail-closed authority, non-implicit Owner/DBA approval, and canonical P1 query verified without fake production mutation. | P2-E is `COMPLETE / PRODUCTION BASELINE ESTABLISHED`. |
+| GAP-034 | Closed | Retained-local D1 bootstrap lifecycle issue was fixed and P2-F release quality is green. | P2-F unit `106/106`, E2E `20/20`, full `128/128`, fresh clone and GitHub Actions `33352997498` / `33353180460` PASS. |
+| P2-F | Complete — deployed / activation disabled | Read-only `ApprovedSemanticContextResolver` deploys after EffectiveScope and Authorized Catalog and before model egress; P0 QueryPolicyEngine and DLP stay final authorities. | Worker `9b2cc079-066f-4df0-b9aa-e2d10a910f2f`; immediate rollback `24622697-5acd-48ef-bbc8-58016589e129`; APP `0001`–`0012`, DATA `0001`, no pending migrations, snapshot `9fc08cbf8ee017c5f6041f7eaa6b7a0b0411b185f4d7e503e0ca47ecdc3b49d3`, P0 policy `72`, registry/assets/revisions/reviews/publications/approvals/authorities `0/0/0/0/0/0/0`. Public smoke PASS. `SEMANTIC_RUNTIME_CONTEXT_ENABLED=false` by strict default (binding absent); empty registry P1 fallback PASS; no semantic/D1/query-registry mutation. P2-G not started. |
+
 ## 2026-08-30: P2-E human approval & publication governance
 
 | ID | Status | Delivered | Verification / current state |
