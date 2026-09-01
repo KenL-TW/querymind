@@ -1,5 +1,11 @@
 # QueryMind Cloudflare D1 + OpenAI 重構追蹤表
 
+## 2026-09-01: P2-H Semantic Runtime activation readiness production release
+
+| ID | Status | Delivered | Verification / current state |
+|---|---|---|---|
+| P2-H | Complete — deployed / activation disabled | 新增 deterministic、read-only Semantic Runtime Readiness Gate；檢查 runtime capability、policy、schema snapshot、approved eligible semantic、source／dependency integrity、D1 結構與 P2-G evidence contract。Endpoint 與 Registry UI 均為 `view_semantics` gate，不呼叫 LLM、不讀 business rows、不寫入 readiness，也不改變授權。 | Git `9b454577e1afcc759f37f5109c5a87a275198a41`；Worker `1e9dd6e7-949e-45e0-aa39-d6fc4285e2b6`；rollback `2ae1d74d-db8f-4acf-84be-bc863d89ba48`；APP `0001`–`0012`、DATA `0001`；schema snapshot `9fc08cbf8ee017c5f6041f7eaa6b7a0b0411b185f4d7e503e0ca47ecdc3b49d3`；P0 policies `72`；registry/assets/revisions/reviews/publications/approvals/authorities `0/0/0/0/0/0/0`; `SEMANTIC_RUNTIME_CONTEXT_ENABLED=false`。CI `33461359347`：unit `114/114`、E2E `22/22`、full `136/136`；fresh disposable D1 true-path rehearsal PASS；production `/`／`/health` 200、anonymous readiness 401；remote D1 SELECT `rows_written=0`。Manifest：`docs/releases/manifests/p2-h-production.json`。Production authenticated Owner／DBA readiness smoke 未執行；下一步為 governed semantic onboarding。 |
+
 ## 2026-08-31: P2-G semantic evidence hook production release
 
 | ID | Status | Delivered | Verification / current state |

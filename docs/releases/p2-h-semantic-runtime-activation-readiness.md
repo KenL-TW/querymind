@@ -2,8 +2,8 @@
 
 ## 1. Baseline
 
-* Git SHA：`4f3bdae0ef260f24fa696376bc77232531a8f107`（P2-H 程式基線；後續 true-path 測試變更尚未提交，等待 CI／部署閘門）。
-* Worker：`querymind`，網址 `https://querymind.digitalaaronl.workers.dev`；目前已驗證的 production 版本仍是 `2ae1d74d-db8f-4acf-84be-bc863d89ba48`。
+* Git SHA：`9b454577e1afcc759f37f5109c5a87a275198a41`。
+* Worker：`querymind`，網址 `https://querymind.digitalaaronl.workers.dev`；本次 production version 為 `1e9dd6e7-949e-45e0-aa39-d6fc4285e2b6`。
 * Migration：APP `0001`–`0012`、DATA `0001`；P2-H 沒有新增 migration。
 * Registry：production 基線版本 `0`；semantic assets、revisions、reviews、publications、approvals、authorities 皆為 `0`。
 * Feature flag：production `SEMANTIC_RUNTIME_CONTEXT_ENABLED=false`，必須維持關閉。
@@ -29,7 +29,7 @@
 
 ## 5. Platform Readiness
 
-Disposable readiness fixtures 與 production-compatible code path 為 `PASS`；本次 revision 的 production deployment 尚未通過外部 release gate。
+Disposable readiness fixtures、production health／D1 結構核對與本次 Worker deployment 均為 `PASS`。
 
 ## 6. Semantic Content Readiness
 
@@ -42,10 +42,10 @@ Disposable readiness fixtures 與 production-compatible code path 為 `PASS`；�
 
 ## 8. Release Readiness
 
-* Static checks：`npm run check`、`node --check public/app.js`、`git diff --check` 對目前變更皆通過。
-* Fresh clone：先前 clean clone 已完成 `npm ci`、disposable APP `0001`–`0012`／DATA `0001` 初始化、typecheck、P0／P2-F／P2-G／P2-H targeted `79/79` 與 production dry-run。
-* CI：前一個 code baseline 的 `33397224899` 兩個 jobs 通過；本次新增 true-path E2E 需要新的 CI run，尚未取得 release authorization。
-* Rollback：production 前一版 Worker `2ae1d74d-db8f-4acf-84be-bc863d89ba48` 仍是 rollback target。
+* Static checks：`npm run check`、`node --check public/app.js`、`git diff --check` 通過。
+* Fresh clone：完成 `npm ci`、disposable APP `0001`–`0012`／DATA `0001` 初始化、typecheck、targeted P0／P2-F／P2-G／P2-H `79/79` 與 production dry-run。
+* CI：`33461359347` 的 Cloudflare runtime 與 legacy regression jobs 均 `success`；unit `114/114`、E2E `22/22`、full `136/136`。
+* Rollback：production 前一版 Worker `2ae1d74d-db8f-4acf-84be-bc863d89ba48`。
 
 ## 9. TRUE Semantic Path Test
 
@@ -56,7 +56,7 @@ Disposable environment 的要求已編入 CI fixture：
 * Chat 的 SQL 仍經既有 P0 boundary；
 * 成功 run 儲存該 asset／revision 的 P2-G `USED` evidence。
 
-測試變更已在本機，但新的 CI 執行尚未完成；沒有建立 production semantic content。
+CI disposable D1 已完成核准 Semantic → Chat → P0 QueryPolicyEngine → D1 → P2-G `USED` evidence；沒有建立 production semantic content。
 
 ## 10. Security
 
@@ -68,21 +68,21 @@ Disposable environment 的要求已編入 CI fixture：
 
 ## 11. Tests
 
-目前本機可核對結果：typecheck `PASS`、unit suite `PASS`、fresh-clone targeted P0／P2-F／P2-G／P2-H `79/79 PASS`、dry-run `PASS`。本次 follow-up test change 的完整回歸精確數量仍等待 CI。
+目前可核對結果：typecheck `PASS`、unit `114/114 PASS`、E2E `22/22 PASS`、full `136/136 PASS`、fresh-clone targeted `79/79 PASS`、dry-run `PASS`、CI `33461359347 PASS`。
 
-`FULL REGRESSION GREEN = NO`
+`FULL REGRESSION GREEN = YES`
 
 ## 12. Production Deployment
 
-* Worker：本次延續未部署 P2-H，因外部 command approval 觸發執行環境用量限制。
+* Worker：`1e9dd6e7-949e-45e0-aa39-d6fc4285e2b6`。
 * Previous Worker：`2ae1d74d-db8f-4acf-84be-bc863d89ba48`。
 * Migration status：沒有執行 migration；production 仍是 APP `0001`–`0012`、DATA `0001`。
-* Flag value：仍為 `false`；沒有變更 vars、secrets、Gateway 設定、D1 binding 或資料。
+* Flag value：`false`；部署使用 `--keep-vars`，沒有變更 vars、secrets、Gateway 設定、D1 binding 或資料。
 
 ## 13. Production Readiness Result
 
 ```text
-Platform Readiness = PASS（code/readiness fixtures；production deploy pending）
+Platform Readiness = PASS
 Semantic Content Readiness = NOT_READY — NO_APPROVED_SEMANTIC
 Operator Readiness = NOT EXECUTED — AUTHENTICATED OPERATOR SMOKE REQUIRED
 Activation Status = DISABLED
@@ -90,16 +90,16 @@ Activation Status = DISABLED
 
 ## 14. Semantic Registry Post-State
 
-Production 預期／目前數量：`registry_version=0`；`semantic_assets=0`；`semantic_revisions=0`；`semantic_reviews=0`；`semantic_publications=0`；`semantic_approval_decisions=0`；`semantic_authorities=0`。
+Production remote D1 只讀結果：`registry_version=0`；`semantic_assets=0`；`semantic_revisions=0`；`semantic_reviews=0`；`semantic_publications=0`；`semantic_approval_decisions=0`；`semantic_authorities=0`；active P0 policies `72`；APP migration `0001`–`0012`；DATA migration `0001`；兩次查詢 `rows_written=0`。
 
 ## 15. Rollback
 
 * Worker rollback target：`2ae1d74d-db8f-4acf-84be-bc863d89ba48`。
-* 現在是否需要：`NO`（本次延續沒有部署）。後續若部署 P2-H，只能 Worker-only rollback，flag 仍保持 false；不可回滾已向前套用的 D1 migration。
+* 現在是否需要：`NO`。若需回復，使用 Worker-only rollback 至 `2ae1d74d-db8f-4acf-84be-bc863d89ba48`，flag 維持 false；不可回滾已向前套用的 D1 migration。
 
 ## 16. Final Gate
 
-`P2-H = CODE COMPLETE / DEPLOYMENT BLOCKED`
+`P2-H = COMPLETE / ACTIVATION READINESS BASELINE ESTABLISHED`
 
 ## 17. Next Step
 
@@ -107,4 +107,4 @@ Do NOT enable Semantic Runtime。
 
 `NEXT STEP = GOVERNED SEMANTIC ONBOARDING REQUIRED`
 
-待執行環境用量限制解除後：提交並 push true-path test、取得 green CI、執行 production preflight，以 `--keep-vars` 且不帶 migration 部署，完成 public／anonymous／read-only D1 smoke，再回填本報告的新 Worker version 與精確測試數量。
+維持 Semantic Runtime 關閉；下一步是 `NEXT STEP = GOVERNED SEMANTIC ONBOARDING REQUIRED`。任何啟用前都必須另行完成核准內容、Owner／DBA authenticated smoke、變更審批與 rollback gate。

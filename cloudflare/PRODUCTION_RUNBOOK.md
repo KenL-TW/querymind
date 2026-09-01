@@ -2,7 +2,7 @@
 
 ## Release boundary
 
-Production is Worker `querymind` at `https://querymind.digitalaaronl.workers.dev`. The current verified Worker is `2ae1d74d-db8f-4acf-84be-bc863d89ba48`; the immediate rollback Worker is `9b2cc079-066f-4df0-b9aa-e2d10a910f2f`.
+Production is Worker `querymind` at `https://querymind.digitalaaronl.workers.dev`. The current verified Worker is `1e9dd6e7-949e-45e0-aa39-d6fc4285e2b6`; the immediate rollback Worker is `2ae1d74d-db8f-4acf-84be-bc863d89ba48`.
 
 The Worker runs a static SPA plus two D1 bindings. Production AI uses Cloudflare AI Gateway `querymind-prod` with OpenAI BYOK alias `production`. Keys remain in Cloudflare; never request, print, commit, or pass one on a command line.
 
@@ -47,6 +47,8 @@ $env:QUERYMIND_SMOKE_AUTHORIZATION = 'Bearer <existing-operator-token>'
 npm run smoke:production
 Remove-Item Env:QUERYMIND_SMOKE_AUTHORIZATION
 ```
+
+P2-H readiness is intentionally read-only at `GET /api/v1/admin/semantic-runtime/readiness` and remains protected by `view_semantics`. Production currently has no approved semantic content, so the expected state is `Platform=PASS`, `Semantic Content=NOT_READY — NO_APPROVED_SEMANTIC`, and `Activation=DISABLED`. Anonymous access must return `401`; do not enable `SEMANTIC_RUNTIME_CONTEXT_ENABLED` without a separate governed onboarding, authenticated Owner/DBA smoke, and release approval.
 
 The optional checks read `/api/v1/me` and `/api/v1/semantics`, then run the P1 golden query `請依商品列出銷售額`. They require sales amount, product, three rows, and non-empty authorized verified SQL; no model prose is asserted.
 
