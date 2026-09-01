@@ -432,7 +432,8 @@ test.describe("QueryMind product workspace", () => {
         return { status: response.status, body: await response.json() };
       });
       expect(readiness.status).toBe(200);
-      expect(readiness.body).toMatchObject({ runtimeCapability: "AVAILABLE", activationCurrentState: "DISABLED", checks: { registry: { status: "NOT_READY", code: "NO_APPROVED_SEMANTIC" } } });
+      const expectedActivationState = process.env.QUERYMIND_TEST_SEMANTIC_ENABLED === "true" ? "ENABLED" : "DISABLED";
+      expect(readiness.body).toMatchObject({ runtimeCapability: "AVAILABLE", activationCurrentState: expectedActivationState, checks: { registry: { status: "NOT_READY", code: "NO_APPROVED_SEMANTIC" } } });
       await expect(page.getByRole("button", { name: "Create Semantic Asset" })).toHaveCount(0);
       await expect(page.getByRole("button", { name: /Submit for Review|Request Changes|Reject/ })).toHaveCount(0);
       const forcedMutationStatus = await page.evaluate(async () => {

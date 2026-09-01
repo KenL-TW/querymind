@@ -82,7 +82,7 @@ jobs:
             --request POST \
             --cookie .ci-cookie.txt \
             http://127.0.0.1:8787/api/v1/schema/refresh >/dev/null
-          QUERYMIND_TEST_URL=http://127.0.0.1:8787 npm run test:all
+          QUERYMIND_TEST_SEMANTIC_ENABLED=true QUERYMIND_TEST_URL=http://127.0.0.1:8787 npm run test:all
 
       - name: Validate production-compatible Worker deployment bundle
         working-directory: cloudflare
