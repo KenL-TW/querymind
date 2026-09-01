@@ -142,10 +142,17 @@ export async function loadGovernanceRevision(database: D1Database, assetIdValue:
 }
 
 async function resolvePolicy(database: D1Database, asset: SemanticGovernanceAsset): Promise<PolicyRow> {
-  const keys = [scopeKey("ASSET", asset.domain, asset.assetId), scopeKey("DOMAIN", asset.domain)];
-  const row = await database.prepare("SELECT policy_id, scope_key, scope_kind, domain, asset_id, risk_class, required_approvals, allow_proposer_self_approval, allow_emergency_publication, post_review_due_hours FROM semantic_governance_policies WHERE is_active = 1 AND scope_key IN (?, ?) ORDER BY CASE scope_kind WHEN 'ASSET' THEN 0 ELSE 1 END LIMIT 1").bind(...keys).first<PolicyRow>();
-  if (!row) throw new SemanticGovernanceError("SEMANTIC_APPROVAL_AUTHORITY_NOT_CONFIGURED", "No active semantic approval policy is configured for this asset or domain.");
-  return row;
+  const findSingleActive = async (key: string): Promise<PolicyRow | null> => {
+    const result = await database.prepare("SELECT policy_id, scope_key, scope_kind, domain, asset_id, risk_class, required_approvals, allow_proposer_self_approval, allow_emergency_publication, post_review_due_hours FROM semantic_governance_policies WHERE is_active = 1 AND scope_key = ? ORDER BY created_at DESC, policy_id DESC LIMIT 2").bind(key).all<PolicyRow>();
+    const rows = result.results ?? [];
+    if (rows.length > 1) throw new SemanticGovernanceError("SEMANTIC_GOVERNANCE_CONFLICT", "Multiple active semantic approval policies exist for the same scope.");
+    return rows[0] ?? null;
+  };
+  const assetPolicy = await findSingleActive(scopeKey("ASSET", asset.domain, asset.assetId));
+  if (assetPolicy) return assetPolicy;
+  const domainPolicy = await findSingleActive(scopeKey("DOMAIN", asset.domain));
+  if (!domainPolicy) throw new SemanticGovernanceError("SEMANTIC_APPROVAL_AUTHORITY_NOT_CONFIGURED", "No active semantic approval policy is configured for this asset or domain.");
+  return domainPolicy;
 }
 
 async function resolveAuthority(database: D1Database, asset: SemanticGovernanceAsset, actorId: string, action: SemanticGovernanceAction): Promise<AuthorityRow> {

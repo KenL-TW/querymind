@@ -910,6 +910,21 @@ async function removeInsight(id) { if (!confirm("確定刪除此洞察嗎？")) 
 function dictionaryForm(id = null) { const launch = async () => { const data = await load("dictionary", "/api/v1/dictionary"); const existing = data.entries.find((entry) => entry.id === id) || {}; const dialog = modal(`<form class="modal-form"><span class="eyebrow">Business glossary</span><h2>${id ? "編輯詞彙" : "新增詞彙"}</h2><label>詞彙<input name="term" required maxlength="120" value="${esc(existing.term || "")}"></label><label>定義<textarea name="definition" required maxlength="2000">${esc(existing.definition || "")}</textarea></label><label>分類<input name="category" maxlength="80" value="${esc(existing.category || "business")}"></label><label>範例<textarea name="examples" maxlength="1000">${esc(existing.examples || "")}</textarea></label><button class="button primary">${icon("check")}儲存詞彙</button></form>`); dialog.querySelector("form").onsubmit = async (event) => { event.preventDefault(); try { await api(id ? `/api/v1/dictionary/${id}` : "/api/v1/dictionary", { method: id ? "PUT" : "POST", body: JSON.stringify(Object.fromEntries(new FormData(event.currentTarget))) }); invalidate("dictionary"); dialog.close(); toast("字典已更新，下一次提問會使用新定義"); void render(); } catch (error) { toast(error.message, "error"); } }; }; void launch(); }
 async function removeDictionary(id) { if (!confirm("確定刪除此字典詞彙嗎？")) return; try { await api(`/api/v1/dictionary/${id}`, { method: "DELETE" }); invalidate("dictionary"); toast("詞彙已刪除"); void render(); } catch (error) { toast(error.message, "error"); } }
 function semanticGovernanceInvalidate() { invalidate("admin-semantic-governance", "admin-semantic-users"); }
+async function semanticGovernanceReadBack() {
+  const config = await api("/api/v1/semantics/governance/policies");
+  state.cache.set("admin-semantic-governance", Promise.resolve(config));
+  return config;
+}
+function governanceBoolean(value) { return value === true || Number(value) === 1; }
+function requireGovernanceReadBack(config, collection, idField, id, expected) {
+  const record = (config[collection] || []).find((item) => item[idField] === id);
+  if (!record) throw new Error("儲存後無法由伺服器讀回治理設定，請重新整理後確認。");
+  for (const [key, value] of Object.entries(expected)) {
+    const actual = typeof value === "boolean" ? governanceBoolean(record[key]) : record[key];
+    if (actual !== value) throw new Error("伺服器讀回的治理設定與送出內容不一致；變更未顯示為成功。");
+  }
+  return record;
+}
 async function semanticAuthorityForm() {
   const users = (await governanceUsers()).filter((user) => user.isActive);
   const userOptions = users.map((user) => `<option value="${esc(user.id)}">${esc(user.displayName || user.email)} · ${esc(user.email)}</option>`).join("");
@@ -927,7 +942,13 @@ async function semanticAuthorityForm() {
     const data = new FormData(form);
     const body = { scopeKind: data.get("scopeKind"), domain: data.get("domain") || "", ...(data.get("scopeKind") === "ASSET" ? { assetId: data.get("assetId") } : {}), userId: data.get("userId"), raciRole: data.get("raciRole"), canApprove: data.has("canApprove"), canGovernRuntime: data.has("canGovernRuntime") };
     const errorBox = form.querySelector(".semantic-form-error");
-    try { form.querySelector('[type="submit"]').disabled = true; await api("/api/v1/semantics/governance/authorities", { method: "POST", body: JSON.stringify(body) }); semanticGovernanceInvalidate(); dialog.close(); toast("Semantic Authority 已建立"); void render(); } catch (error) { errorBox.textContent = semanticError(error); errorBox.hidden = false; form.querySelector('[type="submit"]').disabled = false; }
+    try {
+      form.querySelector('[type="submit"]').disabled = true;
+      const created = await api("/api/v1/semantics/governance/authorities", { method: "POST", body: JSON.stringify(body) });
+      const config = await semanticGovernanceReadBack();
+      requireGovernanceReadBack(config, "authorities", "authority_id", created.authorityId, { can_approve: Boolean(body.canApprove), can_govern_runtime: Boolean(body.canGovernRuntime), is_active: 1 });
+      invalidate("admin-semantic-users"); dialog.close(); toast("Semantic Authority 已建立並完成伺服器讀回驗證"); void render();
+    } catch (error) { semanticGovernanceInvalidate(); errorBox.textContent = semanticError(error); errorBox.hidden = false; form.querySelector('[type="submit"]').disabled = false; }
   };
 }
 async function semanticPolicyForm() {
@@ -945,16 +966,32 @@ async function semanticPolicyForm() {
     const data = new FormData(form);
     const body = { scopeKind: data.get("scopeKind"), domain: data.get("domain") || "", ...(data.get("scopeKind") === "ASSET" ? { assetId: data.get("assetId") } : {}), riskClass: data.get("riskClass"), requiredApprovals: Number(data.get("requiredApprovals")), allowProposerSelfApproval: data.has("allowProposerSelfApproval"), allowEmergencyPublication: data.has("allowEmergencyPublication"), postReviewDueHours: Number(data.get("postReviewDueHours")) };
     const errorBox = form.querySelector(".semantic-form-error");
-    try { form.querySelector('[type="submit"]').disabled = true; await api("/api/v1/semantics/governance/policies", { method: "POST", body: JSON.stringify(body) }); semanticGovernanceInvalidate(); dialog.close(); toast("Approval Policy 已建立"); void render(); } catch (error) { errorBox.textContent = semanticError(error); errorBox.hidden = false; form.querySelector('[type="submit"]').disabled = false; }
+    try {
+      form.querySelector('[type="submit"]').disabled = true;
+      const created = await api("/api/v1/semantics/governance/policies", { method: "POST", body: JSON.stringify(body) });
+      const config = await semanticGovernanceReadBack();
+      requireGovernanceReadBack(config, "policies", "policy_id", created.policyId, { required_approvals: body.requiredApprovals, allow_proposer_self_approval: Boolean(body.allowProposerSelfApproval), allow_emergency_publication: Boolean(body.allowEmergencyPublication), post_review_due_hours: body.postReviewDueHours, is_active: 1 });
+      dialog.close(); toast("Approval Policy 已建立並完成伺服器讀回驗證"); void render();
+    } catch (error) { semanticGovernanceInvalidate(); errorBox.textContent = semanticError(error); errorBox.hidden = false; form.querySelector('[type="submit"]').disabled = false; }
   };
 }
 async function toggleSemanticAuthority(authorityId, active) {
   if (!confirm(`確定要${active ? "停用" : "啟用"}這筆 Semantic Authority 嗎？${active ? "停用後，該使用者不再具備此 scope 的 authority。" : "啟用後，backend 會重新套用此 explicit authority。"}`)) return;
-  try { await api(`/api/v1/semantics/governance/authorities/${encodeURIComponent(authorityId)}`, { method: "PATCH", body: JSON.stringify({ isActive: !active }) }); semanticGovernanceInvalidate(); toast(`Semantic Authority 已${active ? "停用" : "啟用"}`); void render(); } catch (error) { toast(semanticError(error), "error"); }
+  try {
+    await api(`/api/v1/semantics/governance/authorities/${encodeURIComponent(authorityId)}`, { method: "PATCH", body: JSON.stringify({ isActive: !active }) });
+    const config = await semanticGovernanceReadBack();
+    requireGovernanceReadBack(config, "authorities", "authority_id", authorityId, { is_active: active ? 0 : 1 });
+    toast(`Semantic Authority 已${active ? "停用" : "啟用"}並完成伺服器讀回驗證`); void render();
+  } catch (error) { semanticGovernanceInvalidate(); toast(semanticError(error), "error"); }
 }
 async function toggleSemanticPolicy(policyId, active) {
   if (!confirm(`確定要${active ? "停用" : "啟用"}這筆 Approval Policy 嗎？${active ? "停用後，相關 Semantic approval 將 fail closed。" : "啟用後，backend 會重新套用此 policy。"}`)) return;
-  try { await api(`/api/v1/semantics/governance/policies/${encodeURIComponent(policyId)}`, { method: "PATCH", body: JSON.stringify({ isActive: !active }) }); semanticGovernanceInvalidate(); toast(`Approval Policy 已${active ? "停用" : "啟用"}`); void render(); } catch (error) { toast(semanticError(error), "error"); }
+  try {
+    await api(`/api/v1/semantics/governance/policies/${encodeURIComponent(policyId)}`, { method: "PATCH", body: JSON.stringify({ isActive: !active }) });
+    const config = await semanticGovernanceReadBack();
+    requireGovernanceReadBack(config, "policies", "policy_id", policyId, { is_active: active ? 0 : 1 });
+    toast(`Approval Policy 已${active ? "停用" : "啟用"}並完成伺服器讀回驗證`); void render();
+  } catch (error) { semanticGovernanceInvalidate(); toast(semanticError(error), "error"); }
 }
 function inviteForm() { const dialog = modal(`<form class="modal-form"><span class="eyebrow">Secure onboarding</span><h2>邀請使用者</h2><label>電子郵件<input name="email" type="email" required></label><label>角色<select name="roleName">${ROLE_NAMES.map((role) => `<option value="${role}">${role}</option>`).join("")}</select></label><label>有效小時<input name="expiresHours" type="number" value="72" min="1" max="720"></label><button class="button primary">${icon("plus")}建立一次性邀請</button></form>`); dialog.querySelector("form").onsubmit = async (event) => { event.preventDefault(); try { const response = await api("/api/v1/admin/invitations", { method: "POST", body: JSON.stringify(Object.fromEntries(new FormData(event.currentTarget))) }); const link = `${location.origin}/accept-invite#token=${encodeURIComponent(response.inviteToken)}`; dialog.dataset.refreshPageOnClose = "true"; dialog.querySelector(".modal-form").innerHTML = `<span class="eyebrow">邀請已建立</span><h2>請安全傳送此連結</h2><p>連結與 Token 都只會在此顯示一次。受邀者可在同一頁確認信箱、設定密碼並進入工作區。</p><code class="secret-value">${esc(link)}</code><button type="button" class="button primary" data-copy-invite>${icon("copy")}複製邀請連結</button>`; dialog.querySelector("[data-copy-invite]").onclick = () => void copyText(link, "邀請連結已複製"); invalidate("admin-invitations"); } catch (error) { toast(error.message, "error"); } }; }
 async function revokeInvite(id) { if (!confirm("確定撤銷這份邀請嗎？")) return; try { await api(`/api/v1/admin/invitations/${id}`, { method: "DELETE" }); invalidate("admin-invitations"); toast("邀請已撤銷"); void render(); } catch (error) { toast(error.message, "error"); } }

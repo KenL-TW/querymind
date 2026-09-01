@@ -26,6 +26,7 @@ const inputs = [
   ["querymind-app", "migrations/app/0010_semantic_schema_intelligence_suggestions.sql"],
   ["querymind-app", "migrations/app/0011_feedback_trust_experience.sql"],
   ["querymind-app", "migrations/app/0012_semantic_approval_publication.sql"],
+  ["querymind-app", "migrations/app/0013_governance_lifecycle_persistence.sql"],
 ];
 
 for (const [database, file] of inputs) {
@@ -71,6 +72,8 @@ const expectedIndexes = [
   "idx_semantic_suggestion_runs_owner_created",
   "idx_semantic_suggestions_run_status",
   "idx_semantic_suggestions_status_type",
+  "uq_semantic_governance_policy_active_scope",
+  "uq_semantic_authority_active_assignment",
 ];
 const verificationSql = "SELECT name FROM sqlite_schema WHERE type = 'table' AND name IN (" + expectedTables.map((name) => `'${name}'`).join(",") + ") ORDER BY name; SELECT name FROM sqlite_schema WHERE type = 'index' AND name IN (" + expectedIndexes.map((name) => `'${name}'`).join(",") + ") ORDER BY name; SELECT registry_version FROM semantic_registry_state WHERE state_key = 'global'; PRAGMA table_info(schema_catalog_state); PRAGMA table_info(query_feedback); PRAGMA foreign_key_list(semantic_sources); PRAGMA foreign_key_list(semantic_suggestions); SELECT sql FROM sqlite_schema WHERE type IN ('table','trigger') AND name IN ('semantic_assets','semantic_revisions','semantic_sources','semantic_aliases','semantic_reviews','semantic_suggestion_runs','semantic_suggestions','semantic_governance_policies','semantic_authorities','semantic_approval_decisions','semantic_publications','semantic_publication_commands','semantic_runtime_commands','semantic_suggestions_generated_content_immutable','semantic_publication_command_guard','semantic_publication_command_apply','semantic_runtime_command_guard','semantic_runtime_command_apply');";
 const verification = spawnSync(process.execPath, [wrangler, "d1", "execute", "querymind-app", "--local", `--persist-to=${persistPath}`, "--command", verificationSql, "--json"], {
@@ -99,4 +102,4 @@ for (const column of ["feedback_version", "target_type", "target_ref", "issue_ca
 }
 
 console.log(`Disposable local D1 initialized at ${persistPath}`);
-console.log("Applied app migrations 0001-0012, including DLP, governed query safety, explainability feedback, semantic persistence, P2-D schema intelligence, P1.2 structured feedback, and P2-E human approval publication governance.");
+console.log("Applied app migrations 0001-0013, including DLP, governed query safety, explainability feedback, semantic persistence, P2-D schema intelligence, P1.2 structured feedback, P2-E human approval publication governance, and P2-Ia governance lifecycle persistence.");

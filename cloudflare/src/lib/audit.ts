@@ -11,6 +11,7 @@ const SEMANTIC_AUDIT_FIELDS = new Set([
   "assetId", "revisionId", "assetType", "revisionNumber", "action", "schemaSnapshotId",
   "runId", "suggestionId", "suggestionType", "promptFingerprint", "modelConfigFingerprint",
   "policyId", "authorityId", "scopeKind", "domain", "riskClass", "requiredApprovals",
+  "canApprove", "canGovernRuntime", "allowProposerSelfApproval", "allowEmergencyPublication", "postReviewDueHours", "isActive",
   "publicationId", "publicationMode", "registryVersionBefore", "registryVersionAfter", "resultCode",
 ]);
 const SEMANTIC_AUDIT_EVENTS = new Set([

@@ -523,7 +523,7 @@ export async function semanticGovernanceConfig(request: Request, env: Env): Prom
       allowEmergencyPublication: booleanField(body.allowEmergencyPublication, "allowEmergencyPublication"),
       postReviewDueHours: integerField(body.postReviewDueHours, "postReviewDueHours", 1, 720),
     });
-    await auditSemantic(env, { actorId: user.id, eventType: "semantic.governance.policy.created", resourceType: "semantic_governance_policy", resourceId: result.policyId, metadata: { policyId: result.policyId, scopeKind, domain, riskClass, requiredApprovals: Number(body.requiredApprovals) } });
+    await auditSemantic(env, { actorId: user.id, eventType: "semantic.governance.policy.created", resourceType: "semantic_governance_policy", resourceId: result.policyId, metadata: { policyId: result.policyId, scopeKind, domain, riskClass, requiredApprovals: Number(body.requiredApprovals), allowProposerSelfApproval: Boolean(body.allowProposerSelfApproval), allowEmergencyPublication: Boolean(body.allowEmergencyPublication), postReviewDueHours: Number(body.postReviewDueHours), isActive: true } });
     return json(result, 201);
   });
 }
@@ -543,7 +543,7 @@ export async function semanticGovernanceAuthorities(request: Request, env: Env):
       actorId: user.id, scopeKind, domain: scopedDomain, assetId, userId: validateOpaqueId(body.userId, "userId"), raciRole,
       canApprove: booleanField(body.canApprove, "canApprove"), canGovernRuntime: booleanField(body.canGovernRuntime, "canGovernRuntime"),
     });
-    await auditSemantic(env, { actorId: user.id, eventType: "semantic.governance.authority.created", resourceType: "semantic_authority", resourceId: result.authorityId, metadata: { authorityId: result.authorityId, scopeKind, domain: scopedDomain } });
+    await auditSemantic(env, { actorId: user.id, eventType: "semantic.governance.authority.created", resourceType: "semantic_authority", resourceId: result.authorityId, metadata: { authorityId: result.authorityId, scopeKind, domain: scopedDomain, canApprove: Boolean(body.canApprove), canGovernRuntime: Boolean(body.canGovernRuntime), isActive: true } });
     return json(result, 201);
   });
 }
@@ -558,10 +558,15 @@ export async function deactivateSemanticAuthority(request: Request, env: Env, au
     const body = await semanticBody(request, ["isActive"]);
     const isActive = booleanField(body.isActive, "isActive");
     const now = new Date().toISOString();
-    const result = await env.QUERYMIND_APP.prepare("UPDATE semantic_authorities SET is_active = ?, updated_at = ? WHERE authority_id = ?").bind(Number(isActive), now, authorityId).run();
+    let result: D1Result;
+    try { result = await env.QUERYMIND_APP.prepare("UPDATE semantic_authorities SET is_active = ?, updated_at = ? WHERE authority_id = ?").bind(Number(isActive), now, authorityId).run(); }
+    catch { throw new HttpError(409, "SEMANTIC_AUTHORITY_CONFLICT", "Authority activation conflicts with an existing active authority assignment."); }
     if (!result.meta.changes) throw new HttpError(404, "SEMANTIC_AUTHORITY_NOT_FOUND", "Semantic authority was not found.");
-    await auditSemantic(env, { actorId: user.id, eventType: `semantic.governance.authority.${isActive ? "activated" : "deactivated"}`, resourceType: "semantic_authority", resourceId: authorityId, metadata: { authorityId, resultCode: isActive ? "ACTIVATED" : "DEACTIVATED" } });
-    return json({ ok: true, authorityId, isActive });
+    const persisted = await env.QUERYMIND_APP.prepare("SELECT can_approve, can_govern_runtime, is_active FROM semantic_authorities WHERE authority_id = ?").bind(authorityId).first<{ can_approve: number; can_govern_runtime: number; is_active: number }>();
+    if (!persisted) throw new HttpError(404, "SEMANTIC_AUTHORITY_NOT_FOUND", "Semantic authority was not found.");
+    const persistedActive = persisted.is_active === 1;
+    await auditSemantic(env, { actorId: user.id, eventType: `semantic.governance.authority.${persistedActive ? "activated" : "deactivated"}`, resourceType: "semantic_authority", resourceId: authorityId, metadata: { authorityId, resultCode: persistedActive ? "ACTIVATED" : "DEACTIVATED", canApprove: persisted.can_approve === 1, canGovernRuntime: persisted.can_govern_runtime === 1, isActive: persistedActive } });
+    return json({ ok: true, authorityId, isActive: persistedActive });
   });
 }
 
@@ -575,10 +580,15 @@ export async function updateSemanticGovernancePolicy(request: Request, env: Env,
     const body = await semanticBody(request, ["isActive"]);
     const isActive = booleanField(body.isActive, "isActive");
     const now = new Date().toISOString();
-    const result = await env.QUERYMIND_APP.prepare("UPDATE semantic_governance_policies SET is_active = ?, updated_at = ? WHERE policy_id = ?").bind(Number(isActive), now, policyId).run();
+    let result: D1Result;
+    try { result = await env.QUERYMIND_APP.prepare("UPDATE semantic_governance_policies SET is_active = ?, updated_at = ? WHERE policy_id = ?").bind(Number(isActive), now, policyId).run(); }
+    catch { throw new HttpError(409, "SEMANTIC_GOVERNANCE_POLICY_CONFLICT", "Policy activation conflicts with an existing active policy for this scope."); }
     if (!result.meta.changes) throw new HttpError(404, "SEMANTIC_GOVERNANCE_POLICY_NOT_FOUND", "Semantic governance policy was not found.");
-    await auditSemantic(env, { actorId: user.id, eventType: `semantic.governance.policy.${isActive ? "activated" : "deactivated"}`, resourceType: "semantic_governance_policy", resourceId: policyId, metadata: { policyId, resultCode: isActive ? "ACTIVATED" : "DEACTIVATED" } });
-    return json({ ok: true, policyId, isActive });
+    const persisted = await env.QUERYMIND_APP.prepare("SELECT required_approvals, allow_proposer_self_approval, allow_emergency_publication, post_review_due_hours, is_active FROM semantic_governance_policies WHERE policy_id = ?").bind(policyId).first<{ required_approvals: number; allow_proposer_self_approval: number; allow_emergency_publication: number; post_review_due_hours: number; is_active: number }>();
+    if (!persisted) throw new HttpError(404, "SEMANTIC_GOVERNANCE_POLICY_NOT_FOUND", "Semantic governance policy was not found.");
+    const persistedActive = persisted.is_active === 1;
+    await auditSemantic(env, { actorId: user.id, eventType: `semantic.governance.policy.${persistedActive ? "activated" : "deactivated"}`, resourceType: "semantic_governance_policy", resourceId: policyId, metadata: { policyId, resultCode: persistedActive ? "ACTIVATED" : "DEACTIVATED", requiredApprovals: persisted.required_approvals, allowProposerSelfApproval: persisted.allow_proposer_self_approval === 1, allowEmergencyPublication: persisted.allow_emergency_publication === 1, postReviewDueHours: persisted.post_review_due_hours, isActive: persistedActive } });
+    return json({ ok: true, policyId, isActive: persistedActive });
   });
 }
 
