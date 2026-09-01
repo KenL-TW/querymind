@@ -25,7 +25,10 @@ const SEMANTIC_AUDIT_EVENTS = new Set([
   "semantic.suggestion.dismissed",
   "semantic.suggestion.generation_failed",
   "semantic.governance.policy.created",
+  "semantic.governance.policy.activated",
+  "semantic.governance.policy.deactivated",
   "semantic.governance.authority.created",
+  "semantic.governance.authority.activated",
   "semantic.governance.authority.deactivated",
 ]);
 

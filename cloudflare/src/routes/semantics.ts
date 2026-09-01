@@ -548,6 +548,40 @@ export async function semanticGovernanceAuthorities(request: Request, env: Env):
   });
 }
 
+/** P2-Ia: only the governance administrator may change the active state of a named authority. */
+export async function deactivateSemanticAuthority(request: Request, env: Env, authorityIdValue: string): Promise<Response> {
+  return governed(async () => {
+    const user = await requireUser(request, env);
+    requireBrowserSession(user);
+    requireCapability(user, "manage_semantic_governance");
+    const authorityId = validateOpaqueId(authorityIdValue, "authorityId");
+    const body = await semanticBody(request, ["isActive"]);
+    const isActive = booleanField(body.isActive, "isActive");
+    const now = new Date().toISOString();
+    const result = await env.QUERYMIND_APP.prepare("UPDATE semantic_authorities SET is_active = ?, updated_at = ? WHERE authority_id = ?").bind(Number(isActive), now, authorityId).run();
+    if (!result.meta.changes) throw new HttpError(404, "SEMANTIC_AUTHORITY_NOT_FOUND", "Semantic authority was not found.");
+    await auditSemantic(env, { actorId: user.id, eventType: `semantic.governance.authority.${isActive ? "activated" : "deactivated"}`, resourceType: "semantic_authority", resourceId: authorityId, metadata: { authorityId, resultCode: isActive ? "ACTIVATED" : "DEACTIVATED" } });
+    return json({ ok: true, authorityId, isActive });
+  });
+}
+
+/** P2-Ia: policy activation is a bounded state change; policy contents are immutable here. */
+export async function updateSemanticGovernancePolicy(request: Request, env: Env, policyIdValue: string): Promise<Response> {
+  return governed(async () => {
+    const user = await requireUser(request, env);
+    requireBrowserSession(user);
+    requireCapability(user, "manage_semantic_governance");
+    const policyId = validateOpaqueId(policyIdValue, "policyId");
+    const body = await semanticBody(request, ["isActive"]);
+    const isActive = booleanField(body.isActive, "isActive");
+    const now = new Date().toISOString();
+    const result = await env.QUERYMIND_APP.prepare("UPDATE semantic_governance_policies SET is_active = ?, updated_at = ? WHERE policy_id = ?").bind(Number(isActive), now, policyId).run();
+    if (!result.meta.changes) throw new HttpError(404, "SEMANTIC_GOVERNANCE_POLICY_NOT_FOUND", "Semantic governance policy was not found.");
+    await auditSemantic(env, { actorId: user.id, eventType: `semantic.governance.policy.${isActive ? "activated" : "deactivated"}`, resourceType: "semantic_governance_policy", resourceId: policyId, metadata: { policyId, resultCode: isActive ? "ACTIVATED" : "DEACTIVATED" } });
+    return json({ ok: true, policyId, isActive });
+  });
+}
+
 export async function semanticApprovalReadiness(request: Request, env: Env, assetId: string, revisionId: string): Promise<Response> {
   return governed(async () => {
     const user = await requireUser(request, env);

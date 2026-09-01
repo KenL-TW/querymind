@@ -13,6 +13,7 @@ QueryMind is a governed AI data-query application. Production is the Cloudflare 
 | APP/DATA migrations | `cloudflare/migrations/app`, `cloudflare/migrations/data` |
 | Semantic Registry | `semantic-*.ts`, `routes/semantics.ts` |
 | P2-E human approval/publication | `semantic-governance.ts`, `routes/semantics.ts`, APP migration `0012_semantic_approval_publication.sql` |
+| P2-Ia governance bootstrap UI | `public/app.js`, `public/styles.css`, `routes/semantics.ts`; capability-gated Admin Authorities / Approval Policies pages |
 | P2-F runtime semantic context | `approved-semantic-context.ts`, `routes/agent.ts`, P2-F release and GAP-034 records |
 | P2-G semantic evidence hook | `explainability.ts`, `approved-semantic-context.ts`, P2-G SDD/release/manifest |
 | P2-H runtime activation readiness | `semantic-runtime-readiness.ts`, `routes/semantic-runtime-readiness.ts`, P2-H SDD/release/manifest |
@@ -28,6 +29,7 @@ QueryMind is a governed AI data-query application. Production is the Cloudflare 
 - Production baseline is APP migrations `0001`–`0012`; P2-E additive APP migration `0012` is applied; DATA remains `0001`.
 - Current semantic state: registry version 0; no assets, revisions, reviews, or suggestion runs
 - P2-G semantic evidence and P2-H read-only activation readiness are deployed additively; runtime semantic activation remains disabled and production registry state remains empty.
+- P2-Ia governance bootstrap UI is deployed as a design-time administration surface; it does not create Production authorities/policies automatically. Human configuration remains required.
 - Release evidence: [P2-G manifest](releases/manifests/p2-g-production.json) and [P2-G release report](releases/p2-g-semantic-evidence-hook.md)
 - Release evidence: [P2-H manifest](releases/manifests/p2-h-production.json) and [P2-H release report](releases/p2-h-semantic-runtime-activation-readiness.md)
 - Release evidence: [P2-F manifest](releases/manifests/p2-f-production.json)

@@ -1,5 +1,11 @@
 # QueryMind Cloudflare D1 + OpenAI 重構追蹤表
 
+## 2026-09-01：P2-Ia Governance Bootstrap UI
+
+| ID | Status | Delivered | Verification / current state |
+|---|---|---|---|
+| P2-Ia-UI | Ready for human governance configuration | 在既有 Admin／Role & Permission 區新增 capability-gated Authorities 與 Approval Policies；沿用 P2-E API/schema；新增 bounded active-state PATCH 與 semantic audit；不修改內建角色、不建立 Semantic asset、不啟用 runtime。 | TypeScript PASS；P2-Ia UI/RBAC lifecycle 3/3 PASS；full Playwright 139/139 PASS；disposable APP `0001`–`0012`／DATA `0001` PASS。部署前 Production authority/policy、registry、runtime 均保持不變，等待 Owner 於 Production UI 建立合法 governance baseline。 |
+
 ## 2026-09-01: P2-H Semantic Runtime activation readiness production release
 
 | ID | Status | Delivered | Verification / current state |

@@ -12,7 +12,7 @@ import { addMessage, createSession, deleteSession, listMessages, listSessions, s
 import { currentUsage, publicConfiguration } from "./routes/system";
 import { submitQueryFeedback } from "./routes/feedback";
 import { acceptInvitation, invitationPreview } from "./routes/invitations";
-import { approveSemanticApi, createSemantic, createSemanticRevisionApi, emergencyPublishSemanticApi, getSemantic, listSemanticReviews, listSemanticRevisions, listSemantics, patchSemanticRevision, postReviewSemanticApi, rejectSemanticApi, requestSemanticChangesApi, resumeSemanticRuntimeApi, semanticApprovalHistory, semanticApprovalReadiness, semanticGovernanceAuthorities, semanticGovernanceConfig, submitSemanticReview, suspendSemanticRuntimeApi } from "./routes/semantics";
+import { approveSemanticApi, createSemantic, createSemanticRevisionApi, deactivateSemanticAuthority, emergencyPublishSemanticApi, getSemantic, listSemanticReviews, listSemanticRevisions, listSemantics, patchSemanticRevision, postReviewSemanticApi, rejectSemanticApi, requestSemanticChangesApi, resumeSemanticRuntimeApi, semanticApprovalHistory, semanticApprovalReadiness, semanticGovernanceAuthorities, semanticGovernanceConfig, submitSemanticReview, suspendSemanticRuntimeApi, updateSemanticGovernancePolicy } from "./routes/semantics";
 import { acceptSemanticSuggestionAsDraftApi, dismissSemanticSuggestion, generateSemanticSuggestions, getSemanticSuggestion, listSemanticSuggestions, semanticSuggestionCatalog } from "./routes/semantic-suggestions";
 import { semanticRuntimeReadiness } from "./routes/semantic-runtime-readiness";
 import { adminOverview, auditLog, connectionInfo, createApiKey, createInsight, createInvitation, createTemplate, dashboard, deleteDictionary, deleteInsight, deleteTemplate, exportCsv, listApiKeys, listDictionary, listInsights, listInvitations, listRoles, listTemplates, listUsers, resetUserPassword, revokeApiKey, revokeInvitation, saveDictionary, systemInfo, updateInsight, updateRole, updateTemplate, updateUser } from "./routes/modules";
@@ -108,6 +108,10 @@ async function route(request: Request, env: Env): Promise<Response> {
   if (request.method === "POST" && url.pathname === "/api/v1/semantics") return createSemantic(request, env);
   if ((request.method === "GET" || request.method === "POST") && url.pathname === "/api/v1/semantics/governance/policies") return semanticGovernanceConfig(request, env);
   if (request.method === "POST" && url.pathname === "/api/v1/semantics/governance/authorities") return semanticGovernanceAuthorities(request, env);
+  const semanticGovernancePolicy = url.pathname.match(/^\/api\/v1\/semantics\/governance\/policies\/([A-Za-z0-9_-]{1,128})$/u);
+  if (semanticGovernancePolicy && request.method === "PATCH") return updateSemanticGovernancePolicy(request, env, semanticGovernancePolicy[1]);
+  const semanticGovernanceAuthority = url.pathname.match(/^\/api\/v1\/semantics\/governance\/authorities\/([A-Za-z0-9_-]{1,128})$/u);
+  if (semanticGovernanceAuthority && request.method === "PATCH") return deactivateSemanticAuthority(request, env, semanticGovernanceAuthority[1]);
   if (request.method === "POST" && url.pathname === "/api/v1/semantics/suggestions/generate") return generateSemanticSuggestions(request, env);
   if (request.method === "GET" && url.pathname === "/api/v1/semantics/suggestions/catalog") return semanticSuggestionCatalog(request, env);
   if (request.method === "GET" && url.pathname === "/api/v1/semantics/suggestions") return listSemanticSuggestions(request, env);

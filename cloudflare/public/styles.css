@@ -3277,6 +3277,19 @@ td select,
 .semantic-ready-note { padding: 10px 11px; border-left: 3px solid var(--teal-600); color: var(--teal-800); background: #f1faf8; }
 .semantic-emergency-note { margin-top: 10px !important; padding: 10px 11px; border: 1px solid #edcfad; border-radius: 7px; color: #824e0b !important; background: #fff8ed; }
 .semantic-ai-boundary { padding-top: 11px; border-top: 1px solid var(--line-soft); color: var(--ink-500) !important; font-size: 10px !important; }
+
+/* P2-Ia: small, capability-gated governance administration surface. */
+.governance-panel { max-width: 1380px; }
+.governance-boundary-note { margin: 0 0 14px; padding: 10px 12px; border-left: 3px solid var(--teal-600); color: var(--ink-600); background: #f2fafb; font-size: 11px; line-height: 1.55; }
+.governance-table { min-width: 1080px; }
+.governance-table td small { display: block; margin-top: 3px; color: var(--ink-500); font-size: 9px; }
+.governance-table code { font-size: 10px; }
+.governance-form { max-width: 560px; }
+.governance-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.governance-form-grid > label { min-width: 0; }
+@media (max-width: 640px) {
+  .governance-form-grid { grid-template-columns: 1fr; }
+}
 .semantic-runtime-readiness { margin: 18px 0; padding: 18px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface-subtle); }
 .semantic-runtime-readiness > header { display: flex; gap: 16px; justify-content: space-between; align-items: flex-start; }
 .semantic-runtime-readiness h3 { margin: 3px 0 6px; }
