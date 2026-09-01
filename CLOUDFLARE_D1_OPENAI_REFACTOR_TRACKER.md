@@ -4,7 +4,7 @@
 
 | ID | Status | Delivered | Verification / current state |
 |---|---|---|---|
-| P2-Ia-UI | Ready for human governance configuration | 在既有 Admin／Role & Permission 區新增 capability-gated Authorities 與 Approval Policies；沿用 P2-E API/schema；新增 bounded active-state PATCH 與 semantic audit；不修改內建角色、不建立 Semantic asset、不啟用 runtime。 | TypeScript PASS；P2-Ia UI/RBAC lifecycle 3/3 PASS；full Playwright 139/139 PASS；disposable APP `0001`–`0012`／DATA `0001` PASS。部署前 Production authority/policy、registry、runtime 均保持不變，等待 Owner 於 Production UI 建立合法 governance baseline。 |
+| P2-Ia-UI | Ready for human governance configuration | 在既有 Admin／Role & Permission 區新增 capability-gated Authorities 與 Approval Policies；沿用 P2-E API/schema；新增 bounded active-state PATCH 與 semantic audit；不修改內建角色、不建立 Semantic asset、不啟用 runtime。 | Git `e1d1cd9`；Worker `8eba9c55-96d2-4ce4-a58e-52acbc6936a6`（rollback `1e9dd6e7-949e-45e0-aa39-d6fc4285e2b6`）；TypeScript PASS；P2-Ia UI/RBAC lifecycle 3/3 PASS；full Playwright 139/139 PASS；disposable APP `0001`–`0012`／DATA `0001` PASS；production public smoke PASS；remote APP/DATA read-only migrations PASS，semantic authorities/policies/assets/revisions/publications remain 0，`rows_written=0`。等待 Owner 於 Production UI 建立合法 governance baseline。 |
 
 ## 2026-09-01: P2-H Semantic Runtime activation readiness production release
 
