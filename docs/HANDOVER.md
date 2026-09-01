@@ -54,6 +54,10 @@ npm run release:preflight
 
 The D1 initializer is disposable and local. D1 migrations are explicit, reviewed operations; Worker deployment must not execute them. For deployment, run the production runbook, then `npm run deploy:production`. For a rollback, use the recorded Worker version; do not roll back forward D1 migrations.
 
+## Release ordering preference
+
+For every future runtime release, the required order is **Cloudflare first, GitHub second**: complete Cloudflare preflight and production Worker deployment (with `--keep-vars`, without an implicit migration), verify the deployed URL and health/read-only smoke, then push or synchronize the corresponding commit and release evidence to GitHub. A documentation-only change does not require a Worker redeploy; preserve the same ordering for any change that affects the Worker bundle or production configuration.
+
 ## What comes next and what is forbidden
 
 P2-E is complete as a design-time governance boundary: human-only RACI, deterministic policy/readiness, quorum and separation-of-duties checks, atomic normal or break-glass publication, immutable evidence, and suspend/resume eligibility. P2-F runtime context, P2-G semantic evidence, and the P2-H readiness gate are deployed and frozen with semantic activation disabled by its release flag; production currently has no semantic assets, policies, or authorities. The next boundary is governed semantic onboarding, not runtime activation.
