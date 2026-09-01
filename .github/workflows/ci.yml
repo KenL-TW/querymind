@@ -53,6 +53,7 @@ jobs:
           ./node_modules/.bin/wrangler dev --local --port 8787 --persist-to .wrangler-test \
             --var=ENVIRONMENT:local \
             --var=AI_MOCK_MODE:true \
+            --var=SEMANTIC_RUNTIME_CONTEXT_ENABLED:true \
             --var=AUTH_REQUIRED:true \
             --var=AUTH_LOGIN_ATTEMPTS_PER_15_MINUTES:100 \
             --var=AUTH_JWT_SECRET:ci-only-jwt-secret-querymind-2026 \

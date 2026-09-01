@@ -98,6 +98,19 @@ test.describe("P2-E human semantic approval and publication governance", () => {
     expect(history.status(), await history.text()).toBe(200);
     await expect(history.json()).resolves.toMatchObject({ decisions: [expect.objectContaining({ decision: "APPROVE", approval_slot: 1 }), expect.objectContaining({ decision: "APPROVE", approval_slot: 2 })], publication: expect.objectContaining({ publication_mode: "NORMAL", registry_version_before: firstApprovalBody.registryVersion, registry_version_after: firstApprovalBody.registryVersion + 1, runtime_eligibility: "ELIGIBLE" }) });
 
+    // P2-H: disposable-D1-only activation rehearsal. CI enables the capability
+    // flag for this Worker, but approval still follows the ordinary human route.
+    // Chat must keep SQL behind P0 and store P2-G's exact selected revision.
+    const sessionCreated = await ownerApi.post(absoluteUrl("/api/v1/sessions"), { data: { title: "P2-H semantic runtime rehearsal" } });
+    expect(sessionCreated.status(), await sessionCreated.text()).toBe(201);
+    const sessionId = (await sessionCreated.json() as { session: { id: string } }).session.id;
+    const semanticChat = await ownerApi.post(absoluteUrl("/api/v1/chat"), { data: { sessionId, prompt: `請查詢 ${canonicalName} 的相關訂單數量` } });
+    expect(semanticChat.status(), await semanticChat.text()).toBe(200);
+    await expect(semanticChat.json()).resolves.toMatchObject({
+      rowCount: expect.any(Number),
+      explainability: { semanticEvidence: { mode: "USED", registryVersion: firstApprovalBody.registryVersion + 1, selections: [expect.objectContaining({ assetId: asset.assetId, revisionId: asset.revisionId })] } },
+    });
+
     const immutable = await ownerApi.patch(absoluteUrl(`/api/v1/semantics/${asset.assetId}/revisions/${asset.revisionId}`), { data: { contract: termContract(canonicalName, domain), aliases: [] } });
     expect(immutable.status()).toBe(409);
     const suspended = await approverOne.post(absoluteUrl(`/api/v1/semantics/${asset.assetId}/revisions/${asset.revisionId}/suspend-runtime`), { data: { idempotencyKey: "suspend-human-approval-01", reason: "Known-bad definition investigation." } });
