@@ -4,7 +4,7 @@
 
 Production is Worker `querymind` at `https://querymind.digitalaaronl.workers.dev`. The current verified Worker is `1e9dd6e7-949e-45e0-aa39-d6fc4285e2b6`; the immediate rollback Worker is `2ae1d74d-db8f-4acf-84be-bc863d89ba48`.
 
-Release ordering is **Cloudflare first, GitHub second** for all Worker/runtime changes: pass the Cloudflare preflight and deploy/verify the production Worker first, then push the matching commit and evidence to GitHub. Documentation-only changes may skip a Worker deploy, but must retain the same release record and must never alter secrets or D1 state implicitly.
+Release ordering is **Cloudflare-only** for all Worker/runtime changes: pass the Cloudflare preflight, validate the production bundle, deploy/verify the production Worker, and record the deployed version and rollback evidence locally. No GitHub push or remote synchronization is required or performed as part of deployment. Documentation-only changes may skip a Worker deploy, but must retain a local release record and must never alter secrets or D1 state implicitly.
 
 The Worker runs a static SPA plus two D1 bindings. Production AI uses Cloudflare AI Gateway `querymind-prod` with OpenAI BYOK alias `production`. Keys remain in Cloudflare; never request, print, commit, or pass one on a command line.
 

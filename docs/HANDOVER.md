@@ -56,7 +56,7 @@ The D1 initializer is disposable and local. D1 migrations are explicit, reviewed
 
 ## Release ordering preference
 
-For every future runtime release, the required order is **Cloudflare first, GitHub second**: complete Cloudflare preflight and production Worker deployment (with `--keep-vars`, without an implicit migration), verify the deployed URL and health/read-only smoke, then push or synchronize the corresponding commit and release evidence to GitHub. A documentation-only change does not require a Worker redeploy; preserve the same ordering for any change that affects the Worker bundle or production configuration.
+For every future runtime release, use a **Cloudflare-only** release flow: complete the Cloudflare preflight, validate the production bundle, deploy the Worker with `--keep-vars` and without an implicit migration, then verify the deployed URL and health/read-only smoke. Do not trigger, require, or push to GitHub as part of deployment. Record the deployed Worker version and rollback version locally. Documentation-only changes do not require a Worker redeploy; any change that affects the Worker bundle or production configuration does.
 
 ## What comes next and what is forbidden
 
