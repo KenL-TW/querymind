@@ -84,6 +84,8 @@ test.describe("P2-F ApprovedSemanticContextResolver", () => {
     expect(result.modelContext).toContain("allowedOperations");
     expect(result.modelContext).toContain("order_total");
     expect(result.modelContext).not.toContain("scopeKey");
+    expect(fixture.statements.some((sql) => sql.includes("ORDER BY a.asset_type"))).toBe(true);
+    expect(fixture.statements.some((sql) => sql.includes("ORDER BY r.asset_type"))).toBe(false);
     expect(result.selected[0]).toMatchObject({ assetId: "asset-sales", revisionId: "revision-sales", assetType: "DIMENSION", canonicalName: "order_total", schemaSnapshotId: snapshot, sources: [{ table: "orders", column: "total" }] });
   });
 

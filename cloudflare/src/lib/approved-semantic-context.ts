@@ -239,7 +239,7 @@ async function registryVersion(database: D1Database): Promise<number> {
 
 async function runtimeRows(database: D1Database, currentVersion: number): Promise<CandidateRow[]> {
   const result = await database.prepare(
-    "SELECT a.asset_id, a.asset_type, a.canonical_name, a.display_name, a.domain, a.asset_status, a.current_approved_revision_id, r.revision_id, r.revision_status, r.payload_json, r.schema_snapshot_id, p.runtime_eligibility FROM semantic_assets a JOIN semantic_revisions r ON r.revision_id = a.current_approved_revision_id AND r.asset_id = a.asset_id JOIN semantic_publications p ON p.asset_id = a.asset_id AND p.revision_id = r.revision_id WHERE a.asset_status = 'ACTIVE' AND r.revision_status = 'APPROVED' AND p.registry_version_after <= ? ORDER BY r.asset_type, a.canonical_name, a.domain, r.revision_id LIMIT ?",
+    "SELECT a.asset_id, a.asset_type, a.canonical_name, a.display_name, a.domain, a.asset_status, a.current_approved_revision_id, r.revision_id, r.revision_status, r.payload_json, r.schema_snapshot_id, p.runtime_eligibility FROM semantic_assets a JOIN semantic_revisions r ON r.revision_id = a.current_approved_revision_id AND r.asset_id = a.asset_id JOIN semantic_publications p ON p.asset_id = a.asset_id AND p.revision_id = r.revision_id WHERE a.asset_status = 'ACTIVE' AND r.revision_status = 'APPROVED' AND p.registry_version_after <= ? ORDER BY a.asset_type, a.canonical_name, a.domain, r.revision_id LIMIT ?",
   ).bind(currentVersion, SEMANTIC_CONTEXT_LIMITS.candidateScan + 1).all<CandidateRow>();
   return result.results ?? [];
 }
