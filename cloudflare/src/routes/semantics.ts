@@ -15,6 +15,8 @@ import {
   loadGovernanceRevision,
   loadPublication,
   requireReady,
+  replaceGovernancePolicy,
+  replaceSemanticAuthority,
   SEMANTIC_RACI_ROLES,
   SEMANTIC_RISK_CLASSES,
   SemanticGovernanceError,
@@ -545,6 +547,50 @@ export async function semanticGovernanceAuthorities(request: Request, env: Env):
     });
     await auditSemantic(env, { actorId: user.id, eventType: "semantic.governance.authority.created", resourceType: "semantic_authority", resourceId: result.authorityId, metadata: { authorityId: result.authorityId, scopeKind, domain: scopedDomain, canApprove: Boolean(body.canApprove), canGovernRuntime: Boolean(body.canGovernRuntime), isActive: true } });
     return json(result, 201);
+  });
+}
+
+/** P2-Ia2: replace one active authority through a single guarded D1 batch. */
+export async function replaceSemanticAuthorityApi(request: Request, env: Env, authorityIdValue: string): Promise<Response> {
+  return governed(async () => {
+    const user = await requireUser(request, env);
+    requireBrowserSession(user);
+    requireCapability(user, "manage_semantic_governance");
+    const authorityId = validateOpaqueId(authorityIdValue, "authorityId");
+    const body = await semanticBody(request, ["expectedUpdatedAt", "canApprove", "canGovernRuntime"]);
+    if (typeof body.expectedUpdatedAt !== "string") throw new HttpError(400, "SEMANTIC_VALIDATION_ERROR", "expectedUpdatedAt is required.");
+    const result = await replaceSemanticAuthority(env.QUERYMIND_APP, {
+      actorId: user.id,
+      authorityId,
+      expectedUpdatedAt: body.expectedUpdatedAt,
+      canApprove: booleanField(body.canApprove, "canApprove"),
+      canGovernRuntime: booleanField(body.canGovernRuntime, "canGovernRuntime"),
+    });
+    return json({ ok: true, ...result });
+  });
+}
+
+/** P2-Ia2: replace one active policy through a single guarded D1 batch. */
+export async function replaceSemanticGovernancePolicyApi(request: Request, env: Env, policyIdValue: string): Promise<Response> {
+  return governed(async () => {
+    const user = await requireUser(request, env);
+    requireBrowserSession(user);
+    requireCapability(user, "manage_semantic_governance");
+    const policyId = validateOpaqueId(policyIdValue, "policyId");
+    const body = await semanticBody(request, ["expectedUpdatedAt", "riskClass", "requiredApprovals", "allowProposerSelfApproval", "allowEmergencyPublication", "postReviewDueHours"]);
+    if (typeof body.expectedUpdatedAt !== "string") throw new HttpError(400, "SEMANTIC_VALIDATION_ERROR", "expectedUpdatedAt is required.");
+    const riskClass = typeof body.riskClass === "string" && SEMANTIC_RISK_CLASSES.includes(body.riskClass as (typeof SEMANTIC_RISK_CLASSES)[number]) ? body.riskClass as (typeof SEMANTIC_RISK_CLASSES)[number] : (() => { throw new HttpError(400, "SEMANTIC_GOVERNANCE_INVALID", "riskClass is invalid."); })();
+    const result = await replaceGovernancePolicy(env.QUERYMIND_APP, {
+      actorId: user.id,
+      policyId,
+      expectedUpdatedAt: body.expectedUpdatedAt,
+      riskClass,
+      requiredApprovals: integerField(body.requiredApprovals, "requiredApprovals", 1, 5),
+      allowProposerSelfApproval: booleanField(body.allowProposerSelfApproval, "allowProposerSelfApproval"),
+      allowEmergencyPublication: booleanField(body.allowEmergencyPublication, "allowEmergencyPublication"),
+      postReviewDueHours: integerField(body.postReviewDueHours, "postReviewDueHours", 1, 720),
+    });
+    return json({ ok: true, ...result });
   });
 }
 

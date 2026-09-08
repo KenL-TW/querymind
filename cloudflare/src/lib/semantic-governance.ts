@@ -1,5 +1,6 @@
 import type { AuthenticatedUser } from "./auth";
 import { hasCapability } from "./auth";
+import { semanticAuditStatement } from "./audit";
 import { assertPinnedDependencies, assertSemanticCatalogReferences, getSchemaSnapshotId, getSemanticRegistryVersion, SemanticRepositoryError } from "./semantic-repository";
 import { SemanticValidationError, validateContract, validateOpaqueId, validateReviewComment } from "./semantic-validation";
 import type { SemanticAssetType, SemanticContract, SemanticRevisionStatus } from "./semantic-types";
@@ -373,6 +374,124 @@ export async function createSemanticAuthority(database: D1Database, input: { act
     await database.prepare("INSERT INTO semantic_authorities (authority_id, scope_key, scope_kind, domain, asset_id, user_id, raci_role, can_approve, can_govern_runtime, is_active, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)").bind(authorityId, scopeKey(input.scopeKind, input.domain, assetId ?? undefined), input.scopeKind, input.domain, assetId, userId, input.raciRole, Number(input.canApprove), Number(input.canGovernRuntime), input.actorId, now, now).run();
   } catch { throw new SemanticGovernanceError("SEMANTIC_AUTHORITY_CONFLICT", "This authority assignment already exists."); }
   return { authorityId };
+}
+
+interface GovernancePolicyRecord {
+  policy_id: string;
+  scope_kind: "DOMAIN" | "ASSET";
+  domain: string;
+  asset_id: string | null;
+  risk_class: SemanticRiskClass;
+  required_approvals: number;
+  allow_proposer_self_approval: number;
+  allow_emergency_publication: number;
+  post_review_due_hours: number;
+  is_active: number;
+  created_at: string;
+  updated_at: string;
+}
+
+interface SemanticAuthorityRecord {
+  authority_id: string;
+  scope_kind: "DOMAIN" | "ASSET";
+  domain: string;
+  asset_id: string | null;
+  user_id: string;
+  raci_role: SemanticRaciRole;
+  can_approve: number;
+  can_govern_runtime: number;
+  is_active: number;
+  created_at: string;
+  updated_at: string;
+}
+
+function validateReplacementVersion(value: string): string {
+  if (!value || value.length > 80) throw new SemanticGovernanceError("SEMANTIC_GOVERNANCE_STALE", "The governance record version is invalid or stale.");
+  return value;
+}
+
+/**
+ * P2-Ia2: immutable authority replacement is one D1 transaction. The identity
+ * tuple remains fixed; changing the assignment is a separate create action.
+ * The scalar scope_key lookup deliberately violates NOT NULL when the guarded
+ * deactivation did not occur, forcing D1 batch rollback instead of a partial
+ * replacement.
+ */
+export async function replaceSemanticAuthority(database: D1Database, input: {
+  actorId: string;
+  authorityId: string;
+  expectedUpdatedAt: string;
+  canApprove: boolean;
+  canGovernRuntime: boolean;
+}): Promise<{ correlationId: string; replaced: SemanticAuthorityRecord; replacement: SemanticAuthorityRecord }> {
+  const authorityId = validateOpaqueId(input.authorityId, "authorityId");
+  const expectedUpdatedAt = validateReplacementVersion(input.expectedUpdatedAt);
+  const current = await database.prepare("SELECT authority_id, scope_kind, domain, asset_id, user_id, raci_role, can_approve, can_govern_runtime, is_active, created_at, updated_at FROM semantic_authorities WHERE authority_id = ?").bind(authorityId).first<SemanticAuthorityRecord>();
+  if (!current) throw new SemanticGovernanceError("SEMANTIC_AUTHORITY_NOT_FOUND", "Semantic authority was not found.");
+  if (current.is_active !== 1 || current.updated_at !== expectedUpdatedAt) throw new SemanticGovernanceError("SEMANTIC_AUTHORITY_REPLACEMENT_CONFLICT", "The authority changed after it was loaded. Refresh and review the active record before replacing it.");
+  if (current.raci_role !== "SEMANTIC_APPROVER" && input.canApprove) throw new SemanticGovernanceError("SEMANTIC_AUTHORITY_INVALID", "Only an explicitly configured Semantic Approver may receive approval authority.");
+
+  const replacementId = crypto.randomUUID();
+  const correlationId = crypto.randomUUID();
+  const now = new Date().toISOString();
+  const replacementGuard = { existsSql: "SELECT 1 FROM semantic_authorities WHERE authority_id = ? AND is_active = 1", values: [replacementId] };
+  try {
+    await database.batch([
+      database.prepare("UPDATE semantic_authorities SET is_active = 0, updated_at = ? WHERE authority_id = ? AND is_active = 1 AND updated_at = ?").bind(now, authorityId, expectedUpdatedAt),
+      database.prepare("INSERT INTO semantic_authorities (authority_id, scope_key, scope_kind, domain, asset_id, user_id, raci_role, can_approve, can_govern_runtime, is_active, created_by, created_at, updated_at) VALUES (?, (SELECT scope_key FROM semantic_authorities WHERE authority_id = ? AND is_active = 0 AND updated_at = ?), ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)").bind(replacementId, authorityId, now, current.scope_kind, current.domain, current.asset_id, current.user_id, current.raci_role, Number(input.canApprove), Number(input.canGovernRuntime), input.actorId, now, now),
+      semanticAuditStatement(database, { actorId: input.actorId, eventType: "semantic.governance.authority.deactivated", resourceType: "semantic_authority", resourceId: authorityId, metadata: { authorityId, correlationId, replacedResourceId: authorityId, replacementResourceId: replacementId, resultCode: "REPLACED", canApprove: Boolean(current.can_approve), canGovernRuntime: Boolean(current.can_govern_runtime), isActive: false } }, replacementGuard),
+      semanticAuditStatement(database, { actorId: input.actorId, eventType: "semantic.governance.authority.created", resourceType: "semantic_authority", resourceId: replacementId, metadata: { authorityId: replacementId, correlationId, replacedResourceId: authorityId, replacementResourceId: replacementId, resultCode: "REPLACEMENT_CREATED", scopeKind: current.scope_kind, domain: current.domain, canApprove: input.canApprove, canGovernRuntime: input.canGovernRuntime, isActive: true } }, replacementGuard),
+    ]);
+  } catch {
+    throw new SemanticGovernanceError("SEMANTIC_AUTHORITY_REPLACEMENT_CONFLICT", "The authority changed concurrently or the replacement conflicts with active governance state.");
+  }
+  const [replaced, replacement] = await Promise.all([
+    database.prepare("SELECT authority_id, scope_kind, domain, asset_id, user_id, raci_role, can_approve, can_govern_runtime, is_active, created_at, updated_at FROM semantic_authorities WHERE authority_id = ?").bind(authorityId).first<SemanticAuthorityRecord>(),
+    database.prepare("SELECT authority_id, scope_kind, domain, asset_id, user_id, raci_role, can_approve, can_govern_runtime, is_active, created_at, updated_at FROM semantic_authorities WHERE authority_id = ?").bind(replacementId).first<SemanticAuthorityRecord>(),
+  ]);
+  if (!replaced || replaced.is_active !== 0 || !replacement || replacement.is_active !== 1) throw new SemanticGovernanceError("SEMANTIC_AUTHORITY_REPLACEMENT_CONFLICT", "Authoritative replacement read-back did not match the committed state.");
+  return { correlationId, replaced, replacement };
+}
+
+/** P2-Ia2 policy replacement preserves scope identity and changes policy values atomically. */
+export async function replaceGovernancePolicy(database: D1Database, input: {
+  actorId: string;
+  policyId: string;
+  expectedUpdatedAt: string;
+  riskClass: SemanticRiskClass;
+  requiredApprovals: number;
+  allowProposerSelfApproval: boolean;
+  allowEmergencyPublication: boolean;
+  postReviewDueHours: number;
+}): Promise<{ correlationId: string; replaced: GovernancePolicyRecord; replacement: GovernancePolicyRecord }> {
+  const policyId = validateOpaqueId(input.policyId, "policyId");
+  const expectedUpdatedAt = validateReplacementVersion(input.expectedUpdatedAt);
+  if (!SEMANTIC_RISK_CLASSES.includes(input.riskClass) || !Number.isInteger(input.requiredApprovals) || input.requiredApprovals < 1 || input.requiredApprovals > 5 || !Number.isInteger(input.postReviewDueHours) || input.postReviewDueHours < 1 || input.postReviewDueHours > 720) throw new SemanticGovernanceError("SEMANTIC_GOVERNANCE_POLICY_INVALID", "Semantic governance policy fields are invalid.");
+  if ((input.riskClass === "HIGH" || input.riskClass === "CRITICAL") && input.requiredApprovals < 2) throw new SemanticGovernanceError("SEMANTIC_GOVERNANCE_POLICY_INVALID", "High and critical risk policies require at least two distinct human approvals.");
+  const current = await database.prepare("SELECT policy_id, scope_kind, domain, asset_id, risk_class, required_approvals, allow_proposer_self_approval, allow_emergency_publication, post_review_due_hours, is_active, created_at, updated_at FROM semantic_governance_policies WHERE policy_id = ?").bind(policyId).first<GovernancePolicyRecord>();
+  if (!current) throw new SemanticGovernanceError("SEMANTIC_GOVERNANCE_POLICY_NOT_FOUND", "Semantic governance policy was not found.");
+  if (current.is_active !== 1 || current.updated_at !== expectedUpdatedAt) throw new SemanticGovernanceError("SEMANTIC_GOVERNANCE_POLICY_REPLACEMENT_CONFLICT", "The policy changed after it was loaded. Refresh and review the active record before replacing it.");
+
+  const replacementId = crypto.randomUUID();
+  const correlationId = crypto.randomUUID();
+  const now = new Date().toISOString();
+  const replacementGuard = { existsSql: "SELECT 1 FROM semantic_governance_policies WHERE policy_id = ? AND is_active = 1", values: [replacementId] };
+  try {
+    await database.batch([
+      database.prepare("UPDATE semantic_governance_policies SET is_active = 0, updated_at = ? WHERE policy_id = ? AND is_active = 1 AND updated_at = ?").bind(now, policyId, expectedUpdatedAt),
+      database.prepare("INSERT INTO semantic_governance_policies (policy_id, scope_key, scope_kind, domain, asset_id, risk_class, required_approvals, allow_proposer_self_approval, allow_emergency_publication, post_review_due_hours, is_active, created_by, created_at, updated_at) VALUES (?, (SELECT scope_key FROM semantic_governance_policies WHERE policy_id = ? AND is_active = 0 AND updated_at = ?), ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)").bind(replacementId, policyId, now, current.scope_kind, current.domain, current.asset_id, input.riskClass, input.requiredApprovals, Number(input.allowProposerSelfApproval), Number(input.allowEmergencyPublication), input.postReviewDueHours, input.actorId, now, now),
+      semanticAuditStatement(database, { actorId: input.actorId, eventType: "semantic.governance.policy.deactivated", resourceType: "semantic_governance_policy", resourceId: policyId, metadata: { policyId, correlationId, replacedResourceId: policyId, replacementResourceId: replacementId, resultCode: "REPLACED", requiredApprovals: current.required_approvals, allowProposerSelfApproval: Boolean(current.allow_proposer_self_approval), allowEmergencyPublication: Boolean(current.allow_emergency_publication), postReviewDueHours: current.post_review_due_hours, isActive: false } }, replacementGuard),
+      semanticAuditStatement(database, { actorId: input.actorId, eventType: "semantic.governance.policy.created", resourceType: "semantic_governance_policy", resourceId: replacementId, metadata: { policyId: replacementId, correlationId, replacedResourceId: policyId, replacementResourceId: replacementId, resultCode: "REPLACEMENT_CREATED", scopeKind: current.scope_kind, domain: current.domain, riskClass: input.riskClass, requiredApprovals: input.requiredApprovals, allowProposerSelfApproval: input.allowProposerSelfApproval, allowEmergencyPublication: input.allowEmergencyPublication, postReviewDueHours: input.postReviewDueHours, isActive: true } }, replacementGuard),
+    ]);
+  } catch {
+    throw new SemanticGovernanceError("SEMANTIC_GOVERNANCE_POLICY_REPLACEMENT_CONFLICT", "The policy changed concurrently or the replacement conflicts with active governance state.");
+  }
+  const [replaced, replacement] = await Promise.all([
+    database.prepare("SELECT policy_id, scope_kind, domain, asset_id, risk_class, required_approvals, allow_proposer_self_approval, allow_emergency_publication, post_review_due_hours, is_active, created_at, updated_at FROM semantic_governance_policies WHERE policy_id = ?").bind(policyId).first<GovernancePolicyRecord>(),
+    database.prepare("SELECT policy_id, scope_kind, domain, asset_id, risk_class, required_approvals, allow_proposer_self_approval, allow_emergency_publication, post_review_due_hours, is_active, created_at, updated_at FROM semantic_governance_policies WHERE policy_id = ?").bind(replacementId).first<GovernancePolicyRecord>(),
+  ]);
+  if (!replaced || replaced.is_active !== 0 || !replacement || replacement.is_active !== 1) throw new SemanticGovernanceError("SEMANTIC_GOVERNANCE_POLICY_REPLACEMENT_CONFLICT", "Authoritative replacement read-back did not match the committed state.");
+  return { correlationId, replaced, replacement };
 }
 
 export async function listGovernanceConfig(database: D1Database): Promise<{ policies: Record<string, unknown>[]; authorities: Record<string, unknown>[] }> {

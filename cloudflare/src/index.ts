@@ -12,7 +12,7 @@ import { addMessage, createSession, deleteSession, listMessages, listSessions, s
 import { currentUsage, publicConfiguration } from "./routes/system";
 import { submitQueryFeedback } from "./routes/feedback";
 import { acceptInvitation, invitationPreview } from "./routes/invitations";
-import { approveSemanticApi, createSemantic, createSemanticRevisionApi, deactivateSemanticAuthority, emergencyPublishSemanticApi, getSemantic, listSemanticReviews, listSemanticRevisions, listSemantics, patchSemanticRevision, postReviewSemanticApi, rejectSemanticApi, requestSemanticChangesApi, resumeSemanticRuntimeApi, semanticApprovalHistory, semanticApprovalReadiness, semanticGovernanceAuthorities, semanticGovernanceConfig, submitSemanticReview, suspendSemanticRuntimeApi, updateSemanticGovernancePolicy } from "./routes/semantics";
+import { approveSemanticApi, createSemantic, createSemanticRevisionApi, deactivateSemanticAuthority, emergencyPublishSemanticApi, getSemantic, listSemanticReviews, listSemanticRevisions, listSemantics, patchSemanticRevision, postReviewSemanticApi, rejectSemanticApi, replaceSemanticAuthorityApi, replaceSemanticGovernancePolicyApi, requestSemanticChangesApi, resumeSemanticRuntimeApi, semanticApprovalHistory, semanticApprovalReadiness, semanticGovernanceAuthorities, semanticGovernanceConfig, submitSemanticReview, suspendSemanticRuntimeApi, updateSemanticGovernancePolicy } from "./routes/semantics";
 import { acceptSemanticSuggestionAsDraftApi, dismissSemanticSuggestion, generateSemanticSuggestions, getSemanticSuggestion, listSemanticSuggestions, semanticSuggestionCatalog } from "./routes/semantic-suggestions";
 import { semanticRuntimeReadiness } from "./routes/semantic-runtime-readiness";
 import { adminOverview, auditLog, connectionInfo, createApiKey, createInsight, createInvitation, createTemplate, dashboard, deleteDictionary, deleteInsight, deleteTemplate, exportCsv, listApiKeys, listDictionary, listInsights, listInvitations, listRoles, listTemplates, listUsers, resetUserPassword, revokeApiKey, revokeInvitation, saveDictionary, systemInfo, updateInsight, updateRole, updateTemplate, updateUser } from "./routes/modules";
@@ -108,8 +108,12 @@ async function route(request: Request, env: Env): Promise<Response> {
   if (request.method === "POST" && url.pathname === "/api/v1/semantics") return createSemantic(request, env);
   if ((request.method === "GET" || request.method === "POST") && url.pathname === "/api/v1/semantics/governance/policies") return semanticGovernanceConfig(request, env);
   if (request.method === "POST" && url.pathname === "/api/v1/semantics/governance/authorities") return semanticGovernanceAuthorities(request, env);
+  const semanticGovernancePolicyReplace = url.pathname.match(/^\/api\/v1\/semantics\/governance\/policies\/([A-Za-z0-9_-]{1,128})\/replace$/u);
+  if (semanticGovernancePolicyReplace && request.method === "POST") return replaceSemanticGovernancePolicyApi(request, env, semanticGovernancePolicyReplace[1]);
   const semanticGovernancePolicy = url.pathname.match(/^\/api\/v1\/semantics\/governance\/policies\/([A-Za-z0-9_-]{1,128})$/u);
   if (semanticGovernancePolicy && request.method === "PATCH") return updateSemanticGovernancePolicy(request, env, semanticGovernancePolicy[1]);
+  const semanticGovernanceAuthorityReplace = url.pathname.match(/^\/api\/v1\/semantics\/governance\/authorities\/([A-Za-z0-9_-]{1,128})\/replace$/u);
+  if (semanticGovernanceAuthorityReplace && request.method === "POST") return replaceSemanticAuthorityApi(request, env, semanticGovernanceAuthorityReplace[1]);
   const semanticGovernanceAuthority = url.pathname.match(/^\/api\/v1\/semantics\/governance\/authorities\/([A-Za-z0-9_-]{1,128})$/u);
   if (semanticGovernanceAuthority && request.method === "PATCH") return deactivateSemanticAuthority(request, env, semanticGovernanceAuthority[1]);
   if (request.method === "POST" && url.pathname === "/api/v1/semantics/suggestions/generate") return generateSemanticSuggestions(request, env);
@@ -183,13 +187,15 @@ async function route(request: Request, env: Env): Promise<Response> {
   return env.ASSETS.fetch(request);
 }
 
-function withSecurityHeaders(response: Response, env: Env): Response {
+function withSecurityHeaders(response: Response, env: Env, request: Request): Response {
   const headers = new Headers(response.headers);
   headers.set("x-content-type-options", "nosniff");
   headers.set("referrer-policy", "strict-origin-when-cross-origin");
   headers.set("permissions-policy", "camera=(), microphone=(), geolocation=()");
   headers.set("x-frame-options", "DENY");
   headers.set("content-security-policy", "default-src 'self'; base-uri 'none'; connect-src 'self'; font-src 'self'; form-action 'self'; frame-ancestors 'none'; img-src 'self' data:; object-src 'none'; script-src 'self'; style-src 'self'");
+  const pathname = new URL(request.url).pathname;
+  if (pathname === "/" || pathname === "/index.html" || pathname === "/app.js" || pathname === "/styles.css") headers.set("cache-control", "no-cache");
   if (String(env.ENVIRONMENT) !== "local") headers.set("strict-transport-security", "max-age=31536000; includeSubDomains");
   return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
 }
@@ -197,10 +203,10 @@ function withSecurityHeaders(response: Response, env: Env): Response {
 export default {
   async fetch(request, env): Promise<Response> {
     try {
-      return withSecurityHeaders(await route(request, env), env);
+      return withSecurityHeaders(await route(request, env), env, request);
     } catch (error) {
       console.error(JSON.stringify({ event: "request.failed", message: error instanceof Error ? error.message : "Unknown error" }));
-      return withSecurityHeaders(errorResponse(error), env);
+      return withSecurityHeaders(errorResponse(error), env, request);
     }
   },
 } satisfies ExportedHandler<Env>;

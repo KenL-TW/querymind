@@ -34,6 +34,9 @@ test.describe("P2-Ia Semantic Governance bootstrap UI", () => {
     const mutation = await request.post(absoluteUrl("/api/v1/semantics/governance/policies"), { data: { scopeKind: "DOMAIN", domain: "p2ia_unauthorized", riskClass: "STANDARD", requiredApprovals: 1, allowProposerSelfApproval: false, allowEmergencyPublication: false, postReviewDueHours: 72 } });
     expect(mutation.status()).toBe(403);
     await expect(mutation.json()).resolves.toMatchObject({ error: "RBAC_FORBIDDEN" });
+    const replacement = await request.post(absoluteUrl("/api/v1/semantics/governance/authorities/00000000-0000-4000-8000-000000000000/replace"), { data: { expectedUpdatedAt: "2026-01-01T00:00:00.000Z", canApprove: true, canGovernRuntime: false } });
+    expect(replacement.status()).toBe(403);
+    await expect(replacement.json()).resolves.toMatchObject({ error: "RBAC_FORBIDDEN" });
   });
 
   test("governance UI sends explicit false values and displays only server read-back", async ({ page, request }) => {
@@ -59,6 +62,14 @@ test.describe("P2-Ia Semantic Governance bootstrap UI", () => {
         (authority) => authority.domain === domain && authority.can_approve === 0 && authority.can_govern_runtime === 0 && authority.is_active === 1,
       ),
     ).toBe(true);
+    const authorityRow = page.locator(".governance-table tr").filter({ hasText: domain }).filter({ has: page.getByRole("button", { name: "Replace" }) });
+    await authorityRow.getByRole("button", { name: "Replace" }).click();
+    await expect(page.locator("[data-replacement-preview]")).toContainText("Current");
+    await page.locator('dialog input[name="canApprove"]').check();
+    const replaceAuthorityRequest = page.waitForRequest((candidate) => candidate.url().includes(`/governance/authorities/`) && candidate.url().endsWith("/replace") && candidate.method() === "POST");
+    await page.locator('dialog form button[type="submit"]').click();
+    expect(JSON.parse((await replaceAuthorityRequest).postData() || "{}")).toMatchObject({ canApprove: true, canGovernRuntime: false });
+    await expect(page.locator(".governance-table")).toContainText(domain);
 
     await page.goto(absoluteUrl("/#/admin-semantic-policies"), { waitUntil: "domcontentloaded" });
     await page.locator('[data-action="create-semantic-policy"]').click();
@@ -81,6 +92,13 @@ test.describe("P2-Ia Semantic Governance bootstrap UI", () => {
           policy.is_active === 1,
       ),
     ).toBe(true);
+    const policyRow = page.locator(".governance-table tr").filter({ hasText: domain }).filter({ has: page.getByRole("button", { name: "Replace" }) });
+    await policyRow.getByRole("button", { name: "Replace" }).click();
+    await expect(page.locator("[data-replacement-preview]")).toContainText("Proposed");
+    const replacePolicyRequest = page.waitForRequest((candidate) => candidate.url().includes(`/governance/policies/`) && candidate.url().endsWith("/replace") && candidate.method() === "POST");
+    await page.locator('dialog form button[type="submit"]').click();
+    expect(JSON.parse((await replacePolicyRequest).postData() || "{}")).toMatchObject({ requiredApprovals: 1, allowProposerSelfApproval: false, allowEmergencyPublication: false, postReviewDueHours: 72 });
+    await expect(page.locator(".governance-table")).toContainText(domain);
 
     await page.locator('[data-action="create-semantic-policy"]').click();
     await page.locator('input[name="domain"]').fill(domain);
@@ -140,17 +158,39 @@ test.describe("P2-Ia Semantic Governance bootstrap UI", () => {
       expect(configBody.policies.some((item) => item.policy_id === policyId && item.domain === domain && item.is_active === 1 && item.allow_proposer_self_approval === 0 && item.allow_emergency_publication === 0 && item.post_review_due_hours === 72)).toBeTruthy();
       expect(configBody.authorities.some((item) => item.authority_id === authorityId && item.user_id === dba!.id && item.can_approve === 1 && item.can_govern_runtime === 0 && item.is_active === 1)).toBeTruthy();
 
-      const deactivateAuthority = await ownerApi.patch(absoluteUrl(`/api/v1/semantics/governance/authorities/${authorityId}`), { data: { isActive: false } });
-      await expectOk(deactivateAuthority, "deactivate explicit authority");
-      const deactivatePolicy = await ownerApi.patch(absoluteUrl(`/api/v1/semantics/governance/policies/${policyId}`), { data: { isActive: false } });
-      await expectOk(deactivatePolicy, "deactivate governance policy");
+      const currentPolicy = configBody.policies.find((item) => item.policy_id === policyId)!;
+      const currentAuthority = configBody.authorities.find((item) => item.authority_id === authorityId)!;
 
-      const replacementPolicy = await ownerApi.post(absoluteUrl("/api/v1/semantics/governance/policies"), { data: { scopeKind: "DOMAIN", domain, riskClass: "STANDARD", requiredApprovals: 1, allowProposerSelfApproval: false, allowEmergencyPublication: false, postReviewDueHours: 72 } });
-      expect(replacementPolicy.status(), await replacementPolicy.text()).toBe(201);
-      const replacementPolicyId = (await replacementPolicy.json() as { policyId: string }).policyId;
-      const replacementAuthority = await ownerApi.post(absoluteUrl("/api/v1/semantics/governance/authorities"), { data: { scopeKind: "DOMAIN", domain, userId: dba!.id, raciRole: "SEMANTIC_APPROVER", canApprove: true, canGovernRuntime: false } });
-      expect(replacementAuthority.status(), await replacementAuthority.text()).toBe(201);
-      const replacementAuthorityId = (await replacementAuthority.json() as { authorityId: string }).authorityId;
+      // Validation failure occurs before the D1 batch and cannot deactivate the old policy.
+      const invalidPolicy = await ownerApi.post(absoluteUrl(`/api/v1/semantics/governance/policies/${policyId}/replace`), { data: { expectedUpdatedAt: currentPolicy.updated_at, riskClass: "HIGH", requiredApprovals: 1, allowProposerSelfApproval: false, allowEmergencyPublication: false, postReviewDueHours: 72 } });
+      expect(invalidPolicy.status()).toBe(400);
+      const afterInvalid = await ownerApi.get(absoluteUrl("/api/v1/semantics/governance/policies"));
+      await expectOk(afterInvalid, "read policy after rejected replacement");
+      expect(((await afterInvalid.json() as { policies: Array<Record<string, unknown>> }).policies.find((item) => item.policy_id === policyId)?.is_active)).toBe(1);
+
+      // Two concurrent replacements share one optimistic version. D1 serializes
+      // the batches: exactly one commits and the other fails deterministically.
+      const policyPayload = { expectedUpdatedAt: currentPolicy.updated_at, riskClass: "STANDARD", requiredApprovals: 1, allowProposerSelfApproval: false, allowEmergencyPublication: false, postReviewDueHours: 72 };
+      const policyAttempts = await Promise.all([
+        ownerApi.post(absoluteUrl(`/api/v1/semantics/governance/policies/${policyId}/replace`), { data: policyPayload }),
+        ownerApi.post(absoluteUrl(`/api/v1/semantics/governance/policies/${policyId}/replace`), { data: policyPayload }),
+      ]);
+      expect(policyAttempts.map((response) => response.status()).sort()).toEqual([200, 409]);
+      const policySuccess = policyAttempts.find((response) => response.status() === 200)!;
+      const replacementPolicyId = (await policySuccess.json() as { replacement: { policy_id: string } }).replacement.policy_id;
+
+      const authorityPayload = { expectedUpdatedAt: currentAuthority.updated_at, canApprove: true, canGovernRuntime: false };
+      const authorityAttempts = await Promise.all([
+        ownerApi.post(absoluteUrl(`/api/v1/semantics/governance/authorities/${authorityId}/replace`), { data: authorityPayload }),
+        ownerApi.post(absoluteUrl(`/api/v1/semantics/governance/authorities/${authorityId}/replace`), { data: authorityPayload }),
+      ]);
+      expect(authorityAttempts.map((response) => response.status()).sort()).toEqual([200, 409]);
+      const authoritySuccess = authorityAttempts.find((response) => response.status() === 200)!;
+      const replacementAuthorityId = (await authoritySuccess.json() as { replacement: { authority_id: string } }).replacement.authority_id;
+
+      const staleAuthority = await ownerApi.post(absoluteUrl(`/api/v1/semantics/governance/authorities/${authorityId}/replace`), { data: authorityPayload });
+      expect(staleAuthority.status()).toBe(409);
+      await expect(staleAuthority.json()).resolves.toMatchObject({ error: "SEMANTIC_AUTHORITY_REPLACEMENT_CONFLICT" });
 
       const afterReplacement = await ownerApi.get(absoluteUrl("/api/v1/semantics/governance/policies"));
       await expectOk(afterReplacement, "read governance records after immutable replacement");
@@ -171,7 +211,7 @@ test.describe("P2-Ia Semantic Governance bootstrap UI", () => {
 
       const audit = await ownerApi.get(absoluteUrl("/api/v1/admin/audit?limit=200"));
       await expectOk(audit, "read governance audit evidence");
-      const events = (await audit.json() as { events: Array<{ eventType: string; resourceId: string }> }).events;
+      const events = (await audit.json() as { events: Array<{ eventType: string; resourceId: string; metadata: string }> }).events;
       expect(events).toEqual(expect.arrayContaining([
         expect.objectContaining({ eventType: "semantic.governance.policy.created", resourceId: policyId }),
         expect.objectContaining({ eventType: "semantic.governance.authority.created", resourceId: authorityId }),
@@ -180,6 +220,14 @@ test.describe("P2-Ia Semantic Governance bootstrap UI", () => {
         expect.objectContaining({ eventType: "semantic.governance.policy.created", resourceId: replacementPolicyId }),
         expect.objectContaining({ eventType: "semantic.governance.authority.created", resourceId: replacementAuthorityId }),
       ]));
+      const policyCorrelation = JSON.parse(events.find((event) => event.eventType === "semantic.governance.policy.deactivated" && event.resourceId === policyId)!.metadata).correlationId;
+      const policyCreatedCorrelation = JSON.parse(events.find((event) => event.eventType === "semantic.governance.policy.created" && event.resourceId === replacementPolicyId)!.metadata).correlationId;
+      const authorityCorrelation = JSON.parse(events.find((event) => event.eventType === "semantic.governance.authority.deactivated" && event.resourceId === authorityId)!.metadata).correlationId;
+      const authorityCreatedCorrelation = JSON.parse(events.find((event) => event.eventType === "semantic.governance.authority.created" && event.resourceId === replacementAuthorityId)!.metadata).correlationId;
+      expect(policyCorrelation).toMatch(/^[0-9a-f-]{36}$/u);
+      expect(policyCreatedCorrelation).toBe(policyCorrelation);
+      expect(authorityCorrelation).toMatch(/^[0-9a-f-]{36}$/u);
+      expect(authorityCreatedCorrelation).toBe(authorityCorrelation);
     } finally {
       await ownerApi.dispose();
     }
