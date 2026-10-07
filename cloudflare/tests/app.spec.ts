@@ -10,6 +10,7 @@ import {
   expectOk,
   loginApi,
   loginUi,
+  navigateToPage,
   ownerCredentials,
   provisionViewer,
 } from "./helpers";
@@ -45,29 +46,144 @@ test.describe("QueryMind product workspace", () => {
     expect(document.headers()["content-security-policy"]).toContain("frame-ancestors 'none'");
   });
 
-  test("Owner can log in and navigate every product module", async ({ page }) => {
+  test("Ask-first entry, grouped Owner navigation, and legacy routes remain available", async ({ page }) => {
     const consoleIssues = collectConsoleIssues(page);
     await page.setViewportSize({ width: 1440, height: 1000 });
     await loginUi(page);
 
     const modules: Array<[string, string]> = [
-      ["dashboard", "工作總覽"], ["chat", "AI 對話"], ["schema", "資料綱要"],
-      ["dictionary", "資料字典"], ["templates", "查詢範本"], ["insights", "我的洞察"],
-      ["usage", "我的用量"], ["source", "資料來源"], ["semantics", "Semantic Registry"], ["admin-overview", "管理總覽"],
+      ["chat", "Ask QueryMind"], ["history", "History"], ["library", "Library"],
+      ["templates", "查詢範本"], ["insights", "我的洞察"], ["dictionary", "資料字典"],
+      ["schema", "資料綱要"], ["source", "資料來源"], ["semantics", "Definitions"], ["needs-review", "Needs Review"], ["admin-overview", "管理總覽"],
       ["admin-users", "使用者"], ["admin-roles", "角色與權限"], ["admin-invitations", "邀請"],
-      ["admin-audit", "稽核紀錄"], ["admin-system", "系統設定"], ["profile", "個人設定"],
+      ["admin-audit", "稽核紀錄"], ["admin-system", "系統設定"], ["admin-semantic-authorities", "Semantic Authorities"], ["admin-semantic-policies", "Approval Policies"],
+      ["profile", "個人設定"], ["usage", "我的用量"],
     ];
 
     const navigation = page.getByRole("navigation", { name: "主要選單" });
+    await expect(navigation.locator(":scope > .nav-item")).toHaveCount(3);
+    await expect(navigation.locator('[data-nav-group="governance"]')).toBeVisible();
+    await page.screenshot({ path: path.join(evidenceDir, "ask-default.png"), fullPage: false });
+    const governance = navigation.locator('[data-nav-group="governance"]');
+    await governance.locator(":scope > summary").click();
+    for (const groupName of ["data-sources", "access", "audit-system"]) {
+      const group = navigation.locator(`[data-nav-group="${groupName}"]`);
+      if (!(await group.evaluate((element) => (element as HTMLDetailsElement).open))) await group.locator(":scope > summary").click();
+    }
+    await page.screenshot({ path: path.join(evidenceDir, "owner-nav.png"), fullPage: false });
     for (const [pageName, title] of modules) {
-      const control = page.locator(`[data-page="${pageName}"]`).first();
-      await expect(control, `${title} should be available to Owner`).toBeVisible();
-      await control.click();
+      await navigateToPage(page, pageName);
       await expect(page.locator(".topbar h1")).toHaveText(title);
     }
+    await page.goto(absoluteUrl("/#/dashboard"), { waitUntil: "domcontentloaded" });
+    await expect(page.locator(".topbar h1")).toHaveText("Ask QueryMind");
+    await expect(page.locator('[data-page="chat"]').first()).toHaveAttribute("aria-current", "page");
     await expect(navigation).toBeVisible();
-    await expect(page.getByText(ownerCredentials.email, { exact: true })).toBeVisible();
+    await page.locator('.account-card[data-page="profile"]').click();
+    await expect(page.locator(".profile-summary")).toContainText(ownerCredentials.email);
+    await expect(page.locator(".topbar h1")).toHaveText("個人設定");
     expect(consoleIssues, consoleIssues.join("\n")).toEqual([]);
+  });
+
+  test("Business-only capabilities get three primary destinations and unauthorized deep links fall back to Ask", async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await page.route("**/api/v1/auth/status", (route) => route.fulfill({ contentType: "application/json", body: JSON.stringify({ user: { id: "business-only", email: "business@example.test", displayName: "Business User", roleName: "viewer", capabilities: ["chat", "manage_own_sessions", "view_templates", "manage_own_insights"] } }) }));
+    await page.route("**/api/v1/sessions**", (route) => route.fulfill({ contentType: "application/json", body: JSON.stringify({ sessions: [] }) }));
+    await page.goto(absoluteUrl("/"), { waitUntil: "domcontentloaded" });
+
+    const navigation = page.getByRole("navigation", { name: "主要選單" });
+    await expect(page.locator(".topbar h1")).toHaveText("Ask QueryMind");
+    await expect(page).toHaveURL(/#\/chat$/u);
+    await expect(navigation.locator(":scope > .nav-item")).toHaveCount(3);
+    await expect(navigation).toContainText("Business Workspace");
+    await expect(navigation).toContainText("Ask QueryMind");
+    await expect(navigation).toContainText("History");
+    await expect(navigation).toContainText("Library");
+    await expect(navigation.locator("[data-nav-group='governance']")).toHaveCount(0);
+    await page.screenshot({ path: path.join(evidenceDir, "business-nav.png"), fullPage: false });
+    await page.screenshot({ path: path.join(evidenceDir, "ask-default.png"), fullPage: false });
+
+    await page.goto(absoluteUrl("/#/admin-users"), { waitUntil: "domcontentloaded" });
+    await expect(page.locator(".topbar h1")).toHaveText("Ask QueryMind");
+    await expect(page).toHaveURL(/#\/chat$/u);
+    await expect(page.locator("[data-page='admin-users']")).toHaveCount(0);
+  });
+
+  test("Owner capability keeps all Governance destinations discoverable without expanding primary navigation", async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 1400 });
+    await page.route("**/api/v1/auth/status", (route) => route.fulfill({ contentType: "application/json", body: JSON.stringify({ user: { id: "owner-fixture", email: "owner@example.test", displayName: "Owner Fixture", roleName: "owner", capabilities: ["*"] } }) }));
+    await page.route("**/api/v1/sessions**", (route) => route.fulfill({ contentType: "application/json", body: JSON.stringify({ sessions: [] }) }));
+    await page.goto(absoluteUrl("/"), { waitUntil: "domcontentloaded" });
+
+    const navigation = page.getByRole("navigation", { name: "主要選單" });
+    await expect(page.locator(".topbar h1")).toHaveText("Ask QueryMind");
+    await expect(navigation.locator(":scope > .nav-item")).toHaveCount(3);
+    const governance = navigation.locator('[data-nav-group="governance"]');
+    await governance.locator(":scope > summary").click();
+    for (const groupName of ["data-sources", "access", "audit-system"]) {
+      const group = navigation.locator(`[data-nav-group="${groupName}"]`);
+      await expect(group).toBeVisible();
+      await group.locator(":scope > summary").click();
+    }
+    for (const route of ["definitions", "needs-review", "schema", "source", "admin-users", "admin-roles", "admin-invitations", "admin-audit", "admin-system", "admin-semantic-authorities", "admin-semantic-policies"]) {
+      await expect(navigation.locator(`[data-route="${route}"]`)).toBeVisible();
+    }
+    await expect(navigation.locator('[data-route="usage"]')).toHaveCount(0);
+    await page.screenshot({ path: path.join(evidenceDir, "owner-nav.png"), fullPage: false });
+  });
+
+  test("History bookmark and reload preserve owned session continuity into Ask", async ({ page }) => {
+    test.skip(!allowMutatingE2E, "History continuity test requires disposable local D1 or explicit mutation opt-in.");
+    await loginUi(page);
+    const title = `PX-01 History ${Date.now()}`;
+    const created = await page.context().request.post(absoluteUrl("/api/v1/sessions"), { data: { title } });
+    await expectOk(created, "create owned session for History route test");
+    const sessionId = ((await created.json()) as { session: { id: string } }).session.id;
+    try {
+      await page.goto(absoluteUrl("/#/history"), { waitUntil: "domcontentloaded" });
+      await expect(page.locator(".topbar h1")).toHaveText("History");
+      await expect(page.locator(`[data-session="${sessionId}"]`)).toContainText(title);
+      await page.reload();
+      await expect(page.locator(".topbar h1")).toHaveText("History");
+      await expect(page.locator(`[data-session="${sessionId}"]`)).toBeVisible();
+      await page.locator(`[data-session="${sessionId}"]`).click();
+      await expect(page).toHaveURL(/#\/chat$/u);
+      await expect(page.locator(".topbar h1")).toHaveText("Ask QueryMind");
+      await expect(page.locator(".chat-head h2")).toHaveText(title);
+      await expect(page.getByLabel("輸入資料問題")).toBeVisible();
+    } finally {
+      await page.context().request.delete(absoluteUrl(`/api/v1/sessions/${sessionId}`));
+    }
+  });
+
+  test("Governance destinations are grouped and individually capability-filtered", async ({ page }) => {
+    const capabilities = ["chat", "manage_own_sessions", "view_templates", "manage_own_insights", "view_schema", "refresh_schema", "view_semantics", "review_semantics"];
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await page.route("**/api/v1/auth/status", (route) => route.fulfill({ contentType: "application/json", body: JSON.stringify({ user: { id: "governance-reviewer", email: "reviewer@example.test", displayName: "Governance Reviewer", roleName: "reviewer", capabilities } }) }));
+    await page.route("**/api/v1/sessions**", (route) => route.fulfill({ contentType: "application/json", body: JSON.stringify({ sessions: [] }) }));
+    let requestedReviewStatus = "";
+    await page.route("**/api/v1/semantics**", async (route) => {
+      requestedReviewStatus = new URL(route.request().url()).searchParams.get("revisionStatus") || "";
+      await route.fulfill({ contentType: "application/json", body: JSON.stringify({ items: [], page: { page: 1, limit: 25, total: 0, hasNext: false } }) });
+    });
+    await page.route("**/api/v1/admin/semantic-runtime/readiness", (route) => route.fulfill({ contentType: "application/json", body: JSON.stringify({ status: "NOT_READY", runtimeCapability: "AVAILABLE", checks: {}, blockers: [] }) }));
+    await page.goto(absoluteUrl("/"), { waitUntil: "domcontentloaded" });
+
+    const navigation = page.getByRole("navigation", { name: "主要選單" });
+    const governance = navigation.locator('[data-nav-group="governance"]');
+    await expect(governance).toBeVisible();
+    await governance.locator(":scope > summary").click();
+    await expect(navigation.locator('[data-route="definitions"]')).toBeVisible();
+    await expect(navigation.locator('[data-route="needs-review"]')).toBeVisible();
+    await expect(navigation.locator('[data-nav-group="data-sources"]')).toBeVisible();
+    await expect(navigation.locator('[data-nav-group="access"]')).toHaveCount(0);
+    await expect(navigation.locator('[data-nav-group="audit-system"]')).toHaveCount(0);
+    await page.screenshot({ path: path.join(evidenceDir, "governance-nav.png"), fullPage: false });
+
+    await navigateToPage(page, "needs-review");
+    await expect(page.locator(".topbar h1")).toHaveText("Needs Review");
+    await expect(page).toHaveURL(/#\/needs-review$/u);
+    await expect.poll(() => requestedReviewStatus).toBe("IN_REVIEW");
   });
 
   test("Semantic Registry escapes metadata and drops undeclared sensitive fields", async ({ page }) => {
@@ -85,7 +201,7 @@ test.describe("QueryMind product workspace", () => {
       });
     });
     try {
-      await page.locator('[data-page="semantics"]').first().click();
+      await navigateToPage(page, "semantics");
       const registry = page.locator(".semantic-registry");
       await expect(registry).toContainText(maliciousName);
       await expect(registry.locator('img[src="x"]')).toHaveCount(0);
@@ -111,7 +227,7 @@ test.describe("QueryMind product workspace", () => {
     await loginUi(page);
     const refresh = await page.context().request.post(absoluteUrl("/api/v1/schema/refresh"));
     await expectOk(refresh, "refresh schema catalog for Semantic Registry UI");
-    await page.locator('[data-page="semantics"]').first().click();
+    await navigateToPage(page, "semantics");
     await expect(page.locator(".semantic-registry")).toBeVisible();
     await page.getByRole("button", { name: "Create Semantic Asset" }).click();
 
@@ -174,7 +290,7 @@ test.describe("QueryMind product workspace", () => {
     await expectOk(configuration, "load runtime configuration");
     const runtime = await configuration.json() as { ai: { availability: string } };
     test.skip(runtime.ai.availability !== "mock", "This deterministic conversation test requires AI mock mode.");
-    await page.locator('[data-page="chat"]').first().click();
+    await navigateToPage(page, "chat");
     await page.getByLabel("輸入資料問題").fill(prompt);
     const chatResponsePromise = page.waitForResponse(
       (response) => new URL(response.url()).pathname === "/api/v1/chat" && response.request().method() === "POST",
@@ -185,18 +301,25 @@ test.describe("QueryMind product workspace", () => {
     expect(chatResponse.ok(), `mock chat failed (${chatResponse.status()}): ${await chatResponse.text()}`).toBeTruthy();
 
     const result = page.locator(".message.assistant .query-result").last();
-    await expect(result.getByText("查詢結果", { exact: true })).toBeVisible({ timeout: 10_000 });
+    await expect(result.getByText("結果", { exact: true })).toBeVisible({ timeout: 10_000 });
     await expect(result.locator(".query-table tbody tr")).toHaveCount(1);
     await expect(result.locator(".query-table thead th")).toHaveText(["訂單數量"]);
+    const answer = page.locator(".message.assistant .message-answer").last();
+    await expect(answer).toBeVisible();
+    expect(await answer.evaluate((element) => element.compareDocumentPosition(document.querySelector("[data-query-result]")!) & Node.DOCUMENT_POSITION_FOLLOWING)).toBeTruthy();
     const explanation = page.locator(".message.assistant .query-explainability").last();
-    await expect(explanation.getByText("查詢說明", { exact: true })).toBeVisible();
-    await expect(explanation).not.toContainText("可解釋查詢查詢完成");
+    await expect(explanation.getByText("為什麼是這個答案？", { exact: true })).toBeVisible();
+    await expect(explanation).not.toHaveAttribute("open", "");
+    await explanation.locator(":scope > summary").click();
+    await expect(explanation).toContainText("使用的資料");
+    await expect(explanation).toContainText("治理檢查");
     await expect(explanation.locator(".sql-disclosure")).toHaveCount(1);
-    await expect(explanation.locator(".sql-disclosure")).toHaveAttribute("open", "");
+    await expect(explanation.locator(".sql-disclosure")).not.toHaveAttribute("open", "");
+    await explanation.locator(".sql-disclosure > summary").click();
     await expect(explanation.locator(".sql-disclosure pre")).toBeVisible();
     await expect(explanation.locator(".sql-disclosure pre")).toContainText("SELECT COUNT(*) AS order_count");
-    await result.getByRole("button", { name: "SQL", exact: true }).click();
-    await expect(result.locator(".sql-panel pre")).toContainText("SELECT COUNT(*) AS order_count");
+    await expect(result.getByRole("button", { name: "SQL", exact: true })).toHaveCount(0);
+    await expect(page.locator(".query-feedback")).toBeVisible();
 
     const archivedItem = page.locator(".session-item").filter({ hasText: prompt });
     await expect(archivedItem).toHaveCount(1);
@@ -237,6 +360,96 @@ test.describe("QueryMind product workspace", () => {
       const cleanup = await Promise.all(createdSessionIds.map((id) => api.delete(absoluteUrl(`/api/v1/sessions/${id}`), { timeout: 5_000 })));
       for (const response of cleanup) await expectOk(response, "remove E2E session");
     }
+    expect(consoleIssues, consoleIssues.join("\n")).toEqual([]);
+  });
+
+  test("PX-02 canonical sales answer prioritizes result and preserves progressive evidence on desktop and mobile", async ({ page }) => {
+    test.skip(!allowMutatingE2E, "Set QUERYMIND_ALLOW_MUTATING_E2E=true before mutating a remote deployment.");
+    const consoleIssues = collectConsoleIssues(page);
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await loginUi(page);
+    await navigateToPage(page, "chat");
+    await page.getByLabel("輸入資料問題").fill("請依商品列出銷售額");
+    const responsePromise = page.waitForResponse(
+      (response) => new URL(response.url()).pathname === "/api/v1/chat" && response.request().method() === "POST",
+      { timeout: 15_000 },
+    );
+    await page.getByRole("button", { name: "送出" }).click();
+    const response = await responsePromise;
+    expect(response.ok(), `canonical chat failed (${response.status()}): ${await response.text()}`).toBeTruthy();
+    const payload = await response.json() as {
+      answer: string;
+      rows: Array<Record<string, unknown>>;
+      rowCount: number;
+      explainability: {
+        understanding: { metrics: string[]; dimensions: string[]; filters: string[]; timeRange: string | null };
+        sources: { tables: Array<{ name: string }>; governance: { scopeApplied: boolean; rowPolicyApplied: boolean; columnPolicyApplied: boolean; dlpApplied: boolean } };
+        explanation: { rawSqlAvailable: boolean; sql?: string };
+        semanticEvidence?: { mode: string };
+      };
+    };
+    expect(payload.rowCount).toBe(3);
+    expect(payload.rows).toHaveLength(3);
+    expect(payload.explainability.understanding.metrics).toContain("sales amount");
+    expect(payload.explainability.understanding.dimensions).toContain("product");
+    expect(payload.explainability.sources.tables.map((source) => source.name)).toEqual(expect.arrayContaining(["order_items", "orders", "products"]));
+    expect(payload.explainability.sources.governance).toMatchObject({ scopeApplied: true, columnPolicyApplied: true, dlpApplied: true });
+    expect(payload.explainability.semanticEvidence?.mode).toBe("NOT_USED");
+    expect(payload.explainability.explanation.rawSqlAvailable).toBe(true);
+
+    const result = page.locator(".message.assistant .query-result").last();
+    await expect(result).toBeVisible();
+    await expect(result.locator(".query-table thead th")).toHaveText(["商品名稱", "銷售額"]);
+    await expect(result.locator(".query-table tbody tr")).toHaveCount(3);
+    await expect(result).toContainText("QueryBook Air");
+    await expect(result).toContainText("Focus Headset");
+    await expect(result).toContainText("Smart Desk Lamp");
+    const assistant = page.locator(".message.assistant").last();
+    const answer = assistant.locator(".message-answer");
+    await expect(answer).toBeVisible();
+    expect(await answer.evaluate((element) => Boolean(element.compareDocumentPosition(element.parentElement!.querySelector("[data-query-result]")!) & Node.DOCUMENT_POSITION_FOLLOWING))).toBeTruthy();
+    await expect(page.getByLabel("輸入資料問題")).toBeVisible();
+    const feedback = page.locator(".query-feedback").last();
+    await expect(feedback).toBeVisible();
+    await expect(feedback.locator(".feedback-negative")).toBeHidden();
+    await page.screenshot({ path: path.join(evidenceDir, "px-02-answer-desktop.png"), fullPage: false });
+
+    const explanation = assistant.locator(".query-explainability");
+    await expect(explanation).not.toHaveAttribute("open", "");
+    await explanation.locator(":scope > summary").click();
+    await expect(explanation).toContainText("銷售額");
+    await expect(explanation).toContainText("商品");
+    await expect(explanation).toContainText("Order Items");
+    await expect(explanation).toContainText("Orders");
+    await expect(explanation).toContainText("Products");
+    await expect(explanation).toContainText("敏感資料檢查已完成");
+    await expect(explanation).toContainText("未使用已核准的企業定義");
+    await expect(explanation.locator("dt", { hasText: "條件" })).toHaveCount(0);
+    await expect(explanation.locator("dt", { hasText: "時間" })).toHaveCount(0);
+    const sql = explanation.locator(".advanced-disclosure");
+    await expect(sql).toHaveCount(1);
+    await expect(sql).not.toHaveAttribute("open", "");
+    await sql.locator(":scope > summary").click();
+    await expect(sql.locator("pre")).toContainText("SUM(");
+    await expect(result.getByRole("button", { name: "SQL", exact: true })).toHaveCount(0);
+    await page.screenshot({ path: path.join(evidenceDir, "px-02-explanation-desktop.png"), fullPage: false });
+
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expect.poll(async () => page.locator(".sidebar").evaluate((element) => element.getBoundingClientRect().right)).toBeLessThanOrEqual(0);
+    await expect(result).toBeVisible();
+    await expect(page.locator(".query-feedback").last()).toBeVisible();
+    await expect(page.getByLabel("輸入資料問題")).toBeVisible();
+    await page.locator(".conversation").evaluate((element) => element.scrollTo(0, 0));
+    await page.evaluate(() => window.scrollTo(0, 0));
+    const overflow = await page.evaluate(() => ({ document: document.documentElement.scrollWidth, viewport: document.documentElement.clientWidth }));
+    expect(overflow.document, `unexpected horizontal page overflow ${JSON.stringify(overflow)}`).toBeLessThanOrEqual(overflow.viewport + 1);
+    const resultWidth = await result.evaluate((element) => ({ scroll: element.scrollWidth, client: element.clientWidth }));
+    expect(resultWidth.scroll, `result card overflows on mobile ${JSON.stringify(resultWidth)}`).toBeLessThanOrEqual(resultWidth.client + 1);
+    await expect(result.locator(".table-scroll-hint")).toBeVisible();
+    const tableScroll = await result.locator(".table-wrap").evaluate((element) => ({ scroll: element.scrollWidth, client: element.clientWidth, overflowX: getComputedStyle(element).overflowX }));
+    expect(tableScroll.scroll).toBeGreaterThan(tableScroll.client);
+    expect(["auto", "scroll"]).toContain(tableScroll.overflowX);
+    await page.screenshot({ path: path.join(evidenceDir, "px-02-answer-mobile.png"), fullPage: false });
     expect(consoleIssues, consoleIssues.join("\n")).toEqual([]);
   });
 
@@ -294,7 +507,7 @@ test.describe("QueryMind product workspace", () => {
     });
 
     try {
-      await page.locator('[data-page="insights"]').first().click();
+      await navigateToPage(page, "insights");
       const sessionCreated = page.waitForResponse(
         (response) => new URL(response.url()).pathname === "/api/v1/sessions" && response.request().method() === "POST",
         { timeout: 7_000 },
@@ -309,6 +522,12 @@ test.describe("QueryMind product workspace", () => {
       await expect(result.locator(".query-table thead th")).toHaveText(["商品名稱", "銷售額"]);
       await expect(result.getByRole("button", { name: "SQL", exact: true })).toHaveCount(0);
       await expect(page.locator(".query-explainability .sql-disclosure")).toHaveCount(0);
+      const explanation = page.locator(".query-explainability").last();
+      await expect(explanation).not.toHaveAttribute("open", "");
+      await explanation.locator(":scope > summary").click();
+      await expect(explanation.locator("dt", { hasText: "條件" })).toHaveCount(0);
+      await expect(explanation.locator("dt", { hasText: "時間" })).toHaveCount(0);
+      await expect(explanation.locator(".advanced-disclosure")).toHaveCount(0);
       await expect(result.locator(".query-table thead th").evaluateAll((headers) => headers.map((header) => ({ display: getComputedStyle(header).display, borderLeftWidth: getComputedStyle(header).borderLeftWidth })))).resolves.toEqual([
         { display: "table-cell", borderLeftWidth: "0px" },
         { display: "table-cell", borderLeftWidth: "1px" },
@@ -324,6 +543,51 @@ test.describe("QueryMind product workspace", () => {
     expect(consoleIssues, consoleIssues.join("\n")).toEqual([]);
   });
 
+  test("Viewer UI hides SQL and export even if a response includes SQL without authorization", async ({ page, request }) => {
+    test.skip(!allowMutatingE2E, "Set QUERYMIND_ALLOW_MUTATING_E2E=true before mutating a remote deployment.");
+    const viewer = await provisionViewer(request);
+    const consoleIssues = collectConsoleIssues(page);
+    const insightId = "px02-viewer-sql-gate";
+    const runId = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+    const forbiddenSql = "SELECT 'PX02_UNAUTHORIZED_SQL_MARKER' AS value FROM products";
+    let sessionId = "";
+
+    await loginUi(page, viewer);
+    await page.route("**/api/v1/insights**", async (route) => {
+      if (route.request().method() !== "GET") return route.continue();
+      return route.fulfill({ contentType: "application/json", body: JSON.stringify({ insights: [{ id: insightId, title: "PX-02 SQL gate fixture", description: "unauthorized UI rendering regression", prompt: "請依商品列出銷售額", sql: "SELECT products.name, SUM(order_items.subtotal) AS sales_revenue FROM products JOIN order_items ON order_items.product_id = products.id GROUP BY products.name", chartType: "table", isFavorite: false, createdAt: "2026-10-07T00:00:00.000Z", updatedAt: "2026-10-07T00:00:00.000Z" }] }) });
+    });
+    await page.route("**/api/v1/query", async (route) => {
+      if (route.request().method() !== "POST") return route.continue();
+      return route.fulfill({ contentType: "application/json", body: JSON.stringify({ rows: [{ product_name: "QueryBook Air", sales_revenue: 29990 }], rowCount: 1, rowCap: 100, maskedColumns: [], durationMs: 1, queryRunId: runId, sql: forbiddenSql, explainability: { version: "p1", queryRunId: runId, understanding: { intent: "比較與彙總資料", metrics: ["sales amount"], dimensions: ["product"], filters: [], timeRange: null, ranking: null, assumptions: [], confidence: "high" }, sources: { tables: [{ name: "products", label: "Products" }, { name: "order_items", label: "Order Items" }], governance: { scopeApplied: true, rowPolicyApplied: false, columnPolicyApplied: true, dlpApplied: true }, result: { rowCount: 1, truncated: false } }, explanation: { business: "指標：sales amount；依商品分組", rawSqlAvailable: false }, summary: { headline: "查詢完成，共 1 筆結果", highlights: [], caveats: [] }, feedback: { supported: true, queryRunId: runId } } }) });
+    });
+
+    try {
+      await navigateToPage(page, "insights");
+      const sessionCreated = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/v1/sessions" && response.request().method() === "POST", { timeout: 7_000 });
+      await page.locator(`[data-run-insight="${insightId}"]`).click();
+      const sessionResponse = await sessionCreated;
+      await expectOk(sessionResponse, "create PX-02 viewer SQL gate session");
+      sessionId = ((await sessionResponse.json()) as { session: { id: string } }).session.id;
+      const result = page.locator(".message.assistant .query-result").last();
+      await expect(result).toBeVisible();
+      await expect(result.locator(".query-table tbody tr")).toHaveCount(1);
+      await expect(result.getByRole("button", { name: "匯出 CSV" })).toHaveCount(0);
+      await expect(result.getByRole("button", { name: "SQL", exact: true })).toHaveCount(0);
+      await expect(result).not.toContainText("PX02_UNAUTHORIZED_SQL_MARKER");
+      const explanation = page.locator(".query-explainability").last();
+      await explanation.locator(":scope > summary").click();
+      await expect(explanation.locator(".sql-disclosure")).toHaveCount(0);
+      await expect(explanation).not.toContainText("PX02_UNAUTHORIZED_SQL_MARKER");
+      await expect(page.locator("[data-copy-sql]")).toHaveCount(0);
+    } finally {
+      await page.unroute("**/api/v1/insights**");
+      await page.unroute("**/api/v1/query");
+      if (sessionId) await expectOk(await page.context().request.delete(absoluteUrl(`/api/v1/sessions/${sessionId}`), { timeout: 5_000 }), "remove PX-02 viewer SQL gate session");
+    }
+    expect(consoleIssues, consoleIssues.join("\n")).toEqual([]);
+  });
+
   test("Owner can create and revoke an invitation and one-time API key", async ({ page }) => {
     test.skip(!allowMutatingE2E, "Set QUERYMIND_ALLOW_MUTATING_E2E=true before mutating a remote deployment.");
     const stamp = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
@@ -331,7 +595,7 @@ test.describe("QueryMind product workspace", () => {
     const keyLabel = `E2E automation ${stamp}`;
     await loginUi(page);
 
-    await page.locator('[data-page="admin-invitations"]').first().click();
+    await navigateToPage(page, "admin-invitations");
     await page.getByRole("button", { name: "建立邀請" }).click();
     const inviteDialog = page.getByRole("dialog");
     await inviteDialog.getByLabel("電子郵件").fill(inviteEmail);
@@ -372,7 +636,7 @@ test.describe("QueryMind product workspace", () => {
     await page.locator("tbody tr").filter({ hasText: inviteEmail }).getByRole("button", { name: "撤銷" }).click();
     await expect(page.locator("tbody tr").filter({ hasText: inviteEmail })).toContainText("已撤銷");
 
-    await page.locator('[data-page="admin-users"]').first().click();
+    await navigateToPage(page, "admin-users");
     const ownerRow = page.locator("tbody tr").filter({ hasText: ownerCredentials.email });
     await ownerRow.getByRole("button", { name: "API Keys" }).click();
     let keyDialog = page.getByRole("dialog");
@@ -396,15 +660,23 @@ test.describe("QueryMind product workspace", () => {
     const viewer = await provisionViewer(request);
     await loginUi(page, viewer);
 
-    for (const pageName of ["dashboard", "chat", "schema", "dictionary", "templates", "insights", "usage", "profile"]) {
-      await expect(page.locator(`[data-page="${pageName}"]`).first()).toBeVisible();
-    }
+    const navigation = page.getByRole("navigation", { name: "主要選單" });
+    await expect(navigation.locator(":scope > .nav-item")).toHaveCount(3);
+    await expect(navigation.locator('[data-page="chat"]')).toBeVisible();
+    await expect(navigation.locator('[data-page="history"]')).toBeVisible();
+    await expect(navigation.locator('[data-page="library"]')).toBeVisible();
+    await expect(navigation.locator('[data-nav-group="governance"]')).toBeVisible();
+    await expect(navigation.locator('[data-page="schema"]')).toHaveCount(1);
+    await expect(navigation.locator('[data-page="dictionary"]')).toHaveCount(0);
+    await expect(navigation.locator('[data-page="templates"]')).toHaveCount(0);
+    await expect(navigation.locator('[data-page="insights"]')).toHaveCount(0);
+    await expect(navigation.locator('[data-page="usage"]')).toHaveCount(0);
     await expect(page.locator('[data-page="source"]')).toHaveCount(0);
     await expect(page.locator('[data-page="semantics"]')).toHaveCount(0);
     await expect(page.locator('[data-page^="admin-"]')).toHaveCount(0);
 
     await page.goto(absoluteUrl("/#/admin-users"), { waitUntil: "domcontentloaded" });
-    await expect(page.locator(".topbar h1")).toHaveText("工作總覽");
+    await expect(page.locator(".topbar h1")).toHaveText("Ask QueryMind");
     await expect(page.getByText("viewer", { exact: true }).first()).toBeVisible();
   });
 
@@ -424,9 +696,8 @@ test.describe("QueryMind product workspace", () => {
     await expectOk(await request.patch(absoluteUrl("/api/v1/admin/roles/viewer"), { data: { capabilities: semanticViewOnlyCapabilities } }), "grant local view_semantics fixture");
     try {
       await loginUi(page, viewer);
-      await expect(page.locator('[data-page="semantics"]').first()).toBeVisible();
-      await page.locator('[data-page="semantics"]').first().click();
-      await expect(page.locator(".topbar h1")).toHaveText("Semantic Registry");
+      await navigateToPage(page, "semantics");
+      await expect(page.locator(".topbar h1")).toHaveText("Definitions");
       const readiness = await page.evaluate(async () => {
         const response = await fetch("/api/v1/admin/semantic-runtime/readiness");
         return { status: response.status, body: await response.json() };
@@ -459,9 +730,8 @@ test.describe("QueryMind product workspace", () => {
     await page.getByRole("button", { name: "開啟選單" }).click();
     await expect(page.getByRole("navigation", { name: "主要選單" })).toBeVisible();
     await expect(page.locator('[data-page="chat"]').first()).toBeVisible();
-    await expect(page.locator('[data-page="semantics"]').first()).toBeVisible();
-    await page.locator('[data-page="semantics"]').first().click();
-    await expect(page.locator(".topbar h1")).toHaveText("Semantic Registry");
+    await navigateToPage(page, "semantics");
+    await expect(page.locator(".topbar h1")).toHaveText("Definitions");
     const dimensions = await page.evaluate(() => ({ scrollWidth: document.documentElement.scrollWidth, clientWidth: document.documentElement.clientWidth }));
     expect(dimensions.scrollWidth).toBeLessThanOrEqual(dimensions.clientWidth + 1);
     expect(await basicAccessibilityIssues(page)).toEqual([]);
@@ -483,7 +753,7 @@ test.describe("QueryMind product workspace", () => {
     });
     await page.route("**/api/v1/query", async (route) => {
       if (route.request().method() !== "POST") return route.continue();
-      return route.fulfill({ contentType: "application/json", body: JSON.stringify({ rows: [{ product_name: "QueryBook Air", sales_revenue: 29990 }], rowCount: 1, rowCap: 100, maskedColumns: [], durationMs: 1, queryRunId: runId, sql: "SELECT products.name, SUM(order_items.subtotal) AS sales_revenue FROM products JOIN order_items ON order_items.product_id = products.id GROUP BY products.name", explainability: { version: "p1", queryRunId: runId, understanding: { intent: "比較與彙總資料", metrics: ["sales amount"], dimensions: ["product"], filters: [], timeRange: null, ranking: null, assumptions: [], confidence: "high" }, sources: { tables: [{ name: "products", label: "Products" }, { name: "order_items", label: "Order Items" }], governance: { scopeApplied: true, rowPolicyApplied: false, columnPolicyApplied: true, dlpApplied: true }, result: { rowCount: 1, truncated: false } }, explanation: { business: "指標：sales amount；依商品分組", rawSqlAvailable: true, sql: "SELECT products.name, SUM(order_items.subtotal) AS sales_revenue FROM products JOIN order_items ON order_items.product_id = products.id GROUP BY products.name" }, summary: { headline: "查詢完成，共 1 筆結果", highlights: [], caveats: [] }, feedback: { supported: true, queryRunId: runId } } }) });
+      return route.fulfill({ contentType: "application/json", body: JSON.stringify({ rows: [{ product_name: "QueryBook Air", sales_revenue: 29990 }], rowCount: 1, rowCap: 100, maskedColumns: [], durationMs: 1, queryRunId: runId, sql: "SELECT products.name, SUM(order_items.subtotal) AS sales_revenue FROM products JOIN order_items ON order_items.product_id = products.id GROUP BY products.name", explainability: { version: "p1", queryRunId: runId, understanding: { intent: "比較與彙總資料", metrics: ["sales amount"], dimensions: ["product"], filters: [], timeRange: null, ranking: null, assumptions: [], confidence: "high" }, sources: { tables: [{ name: "products", label: "Products" }, { name: "order_items", label: "Order Items" }], governance: { scopeApplied: true, rowPolicyApplied: false, columnPolicyApplied: true, dlpApplied: true }, result: { rowCount: 1, truncated: false } }, semanticEvidence: { mode: "USED", registryVersion: 7, schemaSnapshotId: "snapshot-7", selections: [{ assetId: "asset-sales", revisionId: "revision-sales-r1", semanticType: "METRIC", canonicalName: "sales_revenue", label: "Sales Revenue", domain: "Commerce", sources: [{ table: "order_items", column: "subtotal" }], metricAstSummary: "SUM(order_items.subtotal)" }] }, explanation: { business: "指標：sales amount；依商品分組", rawSqlAvailable: true, sql: "SELECT products.name, SUM(order_items.subtotal) AS sales_revenue FROM products JOIN order_items ON order_items.product_id = products.id GROUP BY products.name" }, summary: { headline: "查詢完成，共 1 筆結果", highlights: [], caveats: [] }, feedback: { supported: true, queryRunId: runId } } }) });
     });
     await page.route("**/api/v1/query-runs/*/feedback", async (route) => {
       feedbackCalls += 1;
@@ -491,18 +761,27 @@ test.describe("QueryMind product workspace", () => {
       return route.fulfill({ contentType: "application/json", body: JSON.stringify({ ok: true, feedback: { id: "feedback-fixture", version: "p1.2", rating: "NEEDS_ADJUSTMENT", target: { type: "METRIC", ref: "sales amount" }, category: "metric", submittedAt: "2026-08-28T00:00:00.000Z" } }) });
     });
     try {
-      await page.locator('[data-page="insights"]').first().click();
+      await navigateToPage(page, "insights");
       const sessionCreated = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/v1/sessions" && response.request().method() === "POST", { timeout: 7_000 });
       await page.locator(`[data-run-insight="${insightId}"]`).click();
       const sessionResponse = await sessionCreated;
       await expectOk(sessionResponse, "create P1.2 fixture session");
       createdSessionIds.push(((await sessionResponse.json()) as { session: { id: string } }).session.id);
       const explanation = page.locator(".query-explainability").last();
-      await expect(explanation.getByText("這份結果符合你的需求嗎？", { exact: true })).toBeVisible();
-      await expect(explanation.getByRole("button", { name: "符合需求" })).toBeVisible();
-      await expect(explanation.getByRole("button", { name: "調整這份結果" })).toBeVisible();
+      await expect(explanation).not.toHaveAttribute("open", "");
+      await explanation.locator(":scope > summary").click();
+      await expect(explanation).toContainText("使用的已核准定義");
+      await expect(explanation).toContainText("Sales Revenue");
+      const trace = explanation.locator(".definition-evidence details");
+      await expect(trace).not.toHaveAttribute("open", "");
+      await trace.locator(":scope > summary").click();
+      await expect(trace).toContainText("asset-sales");
+      await expect(trace).toContainText("revision-sales-r1");
+      await expect(page.locator(".query-feedback")).toBeVisible();
+      await expect(explanation.getByRole("button", { name: /針對sales amount提出調整/ })).toBeVisible();
       await explanation.getByRole("button", { name: /針對sales amount提出調整/ }).click();
-      const feedback = explanation.locator("[data-feedback-box]");
+      const feedback = page.locator(".query-feedback").last();
+      await feedback.getByRole("button", { name: "調整這份結果" }).click();
       await expect(feedback.locator(".feedback-negative")).toBeVisible();
       await expect(feedback.locator("[data-feedback-target]")).toHaveValue(/METRIC::/u);
       await feedback.locator("[data-feedback-correction]").fill("這是 <script>alert(1)</script> 的修正");

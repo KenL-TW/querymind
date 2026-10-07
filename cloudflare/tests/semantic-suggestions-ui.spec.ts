@@ -1,5 +1,5 @@
 import { expect, test } from "playwright/test";
-import { allowMutatingE2E, absoluteUrl, expectOk, loginApi, loginUi } from "./helpers";
+import { allowMutatingE2E, absoluteUrl, expectOk, loginApi, loginUi, navigateToPage } from "./helpers";
 
 test.describe("P2-D Semantic Registry suggestion workspace", () => {
   test.skip(!allowMutatingE2E, "Suggestion UI test requires disposable local D1 or explicit mutation opt-in.");
@@ -11,8 +11,8 @@ test.describe("P2-D Semantic Registry suggestion workspace", () => {
     expect(generated.status(), await generated.text()).toBe(200);
 
     await loginUi(page);
-    await page.locator('[data-page="semantics"]').first().click();
-    await expect(page.locator(".topbar h1")).toHaveText("Semantic Registry");
+    await navigateToPage(page, "semantics");
+    await expect(page.locator(".topbar h1")).toHaveText("Definitions");
     await page.getByRole("button", { name: "AI Suggestions" }).click();
     await expect(page.getByRole("heading", { name: "AI Schema Suggestions" })).toBeVisible();
     await expect(page.getByText("AI 建議僅依目前可授權存取的 Schema Metadata 產生", { exact: false }).first()).toBeVisible();
@@ -20,10 +20,10 @@ test.describe("P2-D Semantic Registry suggestion workspace", () => {
     await expect(page.getByText(/Publish|Execute/, { exact: false })).toHaveCount(0);
 
     // Regression: P2-C/P2-D workspace state must not collide with P1 chat state.
-    await page.locator('[data-page="chat"]').first().click();
-    await expect(page.locator(".topbar h1")).toHaveText("AI 對話");
-    await page.locator('[data-page="semantics"]').first().click();
-    await expect(page.locator(".topbar h1")).toHaveText("Semantic Registry");
+    await navigateToPage(page, "chat");
+    await expect(page.locator(".topbar h1")).toHaveText("Ask QueryMind");
+    await navigateToPage(page, "semantics");
+    await expect(page.locator(".topbar h1")).toHaveText("Definitions");
     await page.getByRole("button", { name: "AI Suggestions" }).click();
     await expect(page.getByRole("heading", { name: "AI Schema Suggestions" })).toBeVisible();
 

@@ -1,6 +1,6 @@
 import { audit } from "../lib/audit";
 import { gatewayConfigured } from "../lib/ai-config";
-import { createPasswordRecord, hashOpaqueSecret, requireBrowserSession, requireCapability, requireUser, validateEmail, validatePassword } from "../lib/auth";
+import { createPasswordRecord, hashOpaqueSecret, hasCapability, requireBrowserSession, requireCapability, requireUser, validateEmail, validatePassword } from "../lib/auth";
 import { HttpError, json, readJson } from "../lib/http";
 import { booleanValue, isProductCapability, MAX_SAFE_RESULT_ROWS, objectBody, optionalText, page, requiredText, roleName } from "../lib/product";
 import { assertNoSensitiveInference, maskedQueryRows } from "../lib/dlp";
@@ -65,11 +65,39 @@ export async function deleteTemplate(request: Request, env: Env, id: string): Pr
 }
 
 export async function listInsights(request: Request, env: Env): Promise<Response> {
-  const user = await requireUser(request, env); requireCapability(user, "manage_own_insights"); const result = await env.QUERYMIND_APP.prepare("SELECT id, title, description, prompt, sql_text AS sql, chart_type AS chartType, is_favorite AS isFavorite, created_at AS createdAt, updated_at AS updatedAt FROM insights WHERE user_id = ? ORDER BY is_favorite DESC, updated_at DESC").bind(user.id).all(); return json({ insights: result.results ?? [] });
+  const user = await requireUser(request, env); requireCapability(user, "manage_own_insights");
+  const sqlField = hasCapability(user, "view_schema") ? ", sql_text AS sql" : "";
+  const result = await env.QUERYMIND_APP.prepare(`SELECT id, title, description, prompt${sqlField}, chart_type AS chartType, is_favorite AS isFavorite, created_at AS createdAt, updated_at AS updatedAt FROM insights WHERE user_id = ? ORDER BY is_favorite DESC, updated_at DESC`).bind(user.id).all();
+  return json({ insights: result.results ?? [] });
 }
 
 export async function createInsight(request: Request, env: Env): Promise<Response> {
-  const user = await requireUser(request, env); requireCapability(user, "manage_own_insights"); const body = objectBody(await readJson(request)); const chartType = ["table", "bar", "line", "area"].includes(String(body.chartType)) ? String(body.chartType) : "table"; const now = new Date().toISOString(); const insight = { id: crypto.randomUUID(), title: requiredText(body.title, "title", 120), description: optionalText(body.description, "description", 500) ?? "", prompt: optionalText(body.prompt, "prompt", 4000) ?? "", sql: optionalText(body.sql, "sql", 10_000) ?? null, chartType, isFavorite: booleanValue(body.isFavorite, "isFavorite") ?? false, createdAt: now, updatedAt: now };
+  const user = await requireUser(request, env); requireCapability(user, "manage_own_insights"); const body = objectBody(await readJson(request));
+  const chartType = ["table", "bar", "line", "area"].includes(String(body.chartType)) ? String(body.chartType) : "table";
+  const now = new Date().toISOString();
+  const queryRunId = optionalText(body.queryRunId, "queryRunId", 128);
+  const title = requiredText(body.title, "title", 120);
+  const description = optionalText(body.description, "description", 500) ?? "";
+
+  if (queryRunId) {
+    if (body.sql !== undefined) throw new HttpError(400, "INVALID_REQUEST", "Contextual saves preserve query intent, not executable SQL.");
+    const run = await env.QUERYMIND_APP.prepare("SELECT prompt, outcome FROM query_runs WHERE id = ? AND user_id = ?").bind(queryRunId, user.id).first<{ prompt: string; outcome: string }>();
+    if (!run || run.outcome !== "success") throw new HttpError(404, "QUERY_RUN_NOT_FOUND", "A successful query run owned by this user was not found.");
+
+    // Reuse the owned successful run's UUID as a stable Insight ID. This makes
+    // contextual saves idempotent without another table, migration, or saved
+    // authorization snapshot. SQL and result rows are deliberately not copied.
+    const id = queryRunId;
+    const existing = await env.QUERYMIND_APP.prepare("SELECT user_id, prompt, sql_text FROM insights WHERE id = ?").bind(id).first<{ user_id: string; prompt: string; sql_text: string | null }>();
+    if (existing && (existing.user_id !== user.id || existing.prompt !== run.prompt || existing.sql_text !== null)) throw new HttpError(409, "INSIGHT_CONFLICT", "This saved analysis could not be created.");
+    const inserted = await env.QUERYMIND_APP.prepare("INSERT OR IGNORE INTO insights (id, user_id, title, description, prompt, sql_text, chart_type, is_favorite, created_at, updated_at) VALUES (?, ?, ?, ?, ?, NULL, ?, 0, ?, ?)").bind(id, user.id, title, description, run.prompt, chartType, now, now).run();
+    const insight = await env.QUERYMIND_APP.prepare("SELECT id, title, description, prompt, chart_type AS chartType, is_favorite AS isFavorite, created_at AS createdAt, updated_at AS updatedAt FROM insights WHERE id = ? AND user_id = ? AND prompt = ? AND sql_text IS NULL").bind(id, user.id, run.prompt).first<Record<string, unknown>>();
+    if (!insight) throw new HttpError(409, "INSIGHT_CONFLICT", "This saved analysis could not be created.");
+    if (inserted.meta.changes > 0) await audit(env, { actorId: user.id, eventType: "insight.created", resourceType: "insight", resourceId: id, metadata: { source: "contextual_save", queryRunId } });
+    return json({ insight, alreadySaved: inserted.meta.changes === 0 }, inserted.meta.changes > 0 ? 201 : 200);
+  }
+
+  const insight = { id: crypto.randomUUID(), title, description, prompt: optionalText(body.prompt, "prompt", 4000) ?? "", sql: optionalText(body.sql, "sql", 10_000) ?? null, chartType, isFavorite: booleanValue(body.isFavorite, "isFavorite") ?? false, createdAt: now, updatedAt: now };
   if (insight.sql) await authorizeQuery(env, await resolveEffectiveScope(env, user), insight.sql, user.maxRows); await env.QUERYMIND_APP.prepare("INSERT INTO insights (id, user_id, title, description, prompt, sql_text, chart_type, is_favorite, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").bind(insight.id, user.id, insight.title, insight.description, insight.prompt, insight.sql, insight.chartType, Number(insight.isFavorite), now, now).run(); await audit(env, { actorId: user.id, eventType: "insight.created", resourceType: "insight", resourceId: insight.id }); return json({ insight }, 201);
 }
 

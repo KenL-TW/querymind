@@ -42,7 +42,55 @@ export async function loginUi(page: Page, credentials = ownerCredentials): Promi
   await page.getByLabel("電子郵件", { exact: true }).fill(credentials.email);
   await page.getByLabel("密碼", { exact: true }).fill(credentials.password);
   await page.getByRole("button", { name: "登入工作區" }).click();
-  await expect(page.locator(".topbar h1")).toHaveText("工作總覽");
+  await expect(page.locator(".topbar h1")).toHaveText("Ask QueryMind");
+}
+
+export async function navigateToPage(page: Page, pageName: string): Promise<void> {
+  if (["templates", "insights", "dictionary"].includes(pageName)) {
+    const library = page.getByRole("navigation", { name: "主要選單" }).locator('[data-page="library"]').first();
+    if (await library.count()) {
+      if (!(await library.isVisible())) throw new Error("Library is not visible for this principal");
+      await library.click();
+      await page.locator(`main [data-page="${pageName}"]`).first().evaluate((element) => {
+        for (let parent = element.parentElement; parent; parent = parent.parentElement) {
+          if (parent instanceof HTMLDetailsElement) parent.open = true;
+        }
+      });
+      await page.locator(`main [data-page="${pageName}"]`).click();
+      return;
+    }
+  }
+  if (pageName === "usage") {
+    await page.locator('.account-card[data-page="profile"]').click();
+    await page.locator('main [data-page="usage"]').click();
+    return;
+  }
+
+  const navigation = page.getByRole("navigation", { name: "主要選單" });
+  const item = pageName === "profile"
+    ? page.locator(`[data-page="${pageName}"]`).first()
+    : pageName === "needs-review"
+      ? navigation.locator('[data-route="needs-review"]').first()
+      : navigation.locator(`[data-page="${pageName}"]`).first();
+  if (["templates", "insights", "dictionary"].includes(pageName)) {
+    await page.locator(`main [data-page="${pageName}"]`).first().evaluate((element) => {
+      for (let parent = element.parentElement; parent; parent = parent.parentElement) {
+        if (parent instanceof HTMLDetailsElement) parent.open = true;
+      }
+    });
+    await page.locator(`main [data-page="${pageName}"]`).first().click();
+    return;
+  }
+  if (!(await item.count())) throw new Error(`No navigation destination for ${pageName}`);
+
+  if (pageName !== "profile") {
+    await item.evaluate((element) => {
+      for (let parent = element.parentElement; parent; parent = parent.parentElement) {
+        if (parent instanceof HTMLDetailsElement) parent.open = true;
+      }
+    });
+  }
+  await item.click();
 }
 
 export async function provisionViewer(api: APIRequestContext): Promise<{ id: string; email: string; password: string }> {

@@ -30,7 +30,7 @@ test.describe("P2-Ia Semantic Governance bootstrap UI", () => {
     await expect(page.locator('[data-page="admin-semantic-authorities"]')).toHaveCount(0);
     await expect(page.locator('[data-page="admin-semantic-policies"]')).toHaveCount(0);
     await page.goto(absoluteUrl("/#/admin-semantic-authorities"), { waitUntil: "domcontentloaded" });
-    await expect(page.locator(".topbar h1")).toHaveText("工作總覽");
+    await expect(page.locator(".topbar h1")).toHaveText("Ask QueryMind");
     const mutation = await request.post(absoluteUrl("/api/v1/semantics/governance/policies"), { data: { scopeKind: "DOMAIN", domain: "p2ia_unauthorized", riskClass: "STANDARD", requiredApprovals: 1, allowProposerSelfApproval: false, allowEmergencyPublication: false, postReviewDueHours: 72 } });
     expect(mutation.status()).toBe(403);
     await expect(mutation.json()).resolves.toMatchObject({ error: "RBAC_FORBIDDEN" });

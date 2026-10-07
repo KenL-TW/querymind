@@ -46,7 +46,8 @@ Object.assign(CAPABILITY_LABELS, {
 });
 const PRODUCT_CAPABILITIES = Object.keys(CAPABILITY_LABELS);
 const PAGE_TITLES = {
-  dashboard: ["工作總覽", "個人資料分析工作台"], chat: ["AI 對話", "以自然語言探索單一受控 D1"],
+  dashboard: ["工作總覽", "個人資料分析工作台"], chat: ["Ask QueryMind", "以自然語言探索單一受控 D1"],
+  history: ["History", "找回並繼續先前的資料分析對話"], library: ["Library", "查詢範本、已儲存洞察與商業詞彙"],
   schema: ["資料綱要", "AI 可理解的資料結構與關聯概念"], dictionary: ["資料字典", "工作區共用的商業定義"],
   templates: ["查詢範本", "可重複使用的資料問題"], insights: ["我的洞察", "個人已儲存的資料探索"],
   usage: ["我的用量", "滾動 24 小時使用摘要"], source: ["資料來源", "單一受控的 Cloudflare D1"],
@@ -56,12 +57,14 @@ const PAGE_TITLES = {
   profile: ["個人設定", "帳戶與安全性"],
 };
 const state = {
-  user: null, page: "dashboard", sessions: [], activeSession: null, messages: [], result: null, cache: new Map(),
+  user: null, page: "chat", navRoute: "chat", sessions: [], activeSession: null, messages: [], result: null, cache: new Map(),
   sidebarOpen: false, pendingPrompt: "", sending: false, archiveMode: false, resultTabs: new Map(), renderId: 0,
-  userFilter: "", roleFilter: "all", inviteToken: "",
+  userFilter: "", roleFilter: "all", inviteToken: "", savedAnalysisRuns: new Set(), savingAnalysisRuns: new Set(),
 };
 Object.assign(PAGE_TITLES, {
-  semantics: ["Semantic Registry", "以草稿與審查流程維護企業語意定義"],
+  semantics: ["Definitions", "以草稿與審查流程維護企業語意定義"],
+  definitions: ["Definitions", "以草稿與審查流程維護企業語意定義"],
+  "needs-review": ["Needs Review", "查看等待治理審查的語意定義"],
 });
 Object.assign(state, {
   semanticFilters: { search: "", type: "", assetStatus: "", revisionStatus: "", domain: "", page: 1, limit: 25 },
@@ -109,11 +112,47 @@ function has(capability) { return Boolean(state.user?.capabilities?.includes("*"
 function fmtDate(value, empty = "—") { return value ? new Intl.DateTimeFormat("zh-TW", { dateStyle: "medium", timeStyle: "short" }).format(new Date(value)) : empty; }
 function shortDate(value) { return value ? new Intl.DateTimeFormat("zh-TW", { month: "short", day: "numeric" }).format(new Date(value)) : "—"; }
 function toast(message, tone = "ok") { const item = document.createElement("div"); item.className = `toast ${tone}`; item.innerHTML = `${icon(tone === "error" ? "warning" : "check")}${esc(message)}`; toastRegion.append(item); setTimeout(() => item.remove(), 4600); }
-function pageFromLocation() { const hash = location.hash.replace(/^#\/?/u, ""); return PAGE_TITLES[hash] ? hash : "dashboard"; }
-const PAGE_CAPABILITIES = { chat: "chat", schema: "view_schema", dictionary: "view_dictionary", templates: "view_templates", insights: "manage_own_insights", usage: "view_own_usage", source: "refresh_schema", "admin-overview": "manage_users", "admin-users": "manage_users", "admin-roles": "manage_users", "admin-semantic-authorities": "manage_semantic_governance", "admin-semantic-policies": "manage_semantic_governance", "admin-invitations": "manage_users", "admin-audit": "manage_users", "admin-system": "manage_users" };
+const ROUTE_ALIASES = { ask: "chat", dashboard: "chat", definitions: "semantics", "needs-review": "semantics" };
+const PAGE_CAPABILITIES = { chat: "chat", history: "manage_own_sessions", schema: "view_schema", dictionary: "view_dictionary", templates: "view_templates", insights: "manage_own_insights", usage: "view_own_usage", source: "refresh_schema", "admin-overview": "manage_users", "admin-users": "manage_users", "admin-roles": "manage_users", "admin-semantic-authorities": "manage_semantic_governance", "admin-semantic-policies": "manage_semantic_governance", "admin-invitations": "manage_users", "admin-audit": "manage_users", "admin-system": "manage_users", definitions: "view_semantics" };
 Object.assign(PAGE_CAPABILITIES, { semantics: "view_semantics" });
-function pageAllowed(page) { const capability = PAGE_CAPABILITIES[page]; return Boolean(PAGE_TITLES[page]) && (!capability || has(capability)); }
-function go(page, options = {}) { if (!pageAllowed(page)) { toast("你的角色無法使用此功能", "error"); return; } if (options.pendingPrompt !== undefined) state.pendingPrompt = options.pendingPrompt; if (options.resetSession) { state.activeSession = null; state.messages = []; state.result = null; } const hash = `#/${page}`; if (location.hash === hash) { state.page = page; void render(); } else location.hash = hash; }
+function pageAllowed(page) {
+  const target = ROUTE_ALIASES[page] || page;
+  if (page === "library") return has("view_templates") || has("manage_own_insights") || has("view_dictionary");
+  if (page === "needs-review") return has("view_semantics") && has("review_semantics");
+  const capability = PAGE_CAPABILITIES[page] || PAGE_CAPABILITIES[target];
+  return Boolean(PAGE_TITLES[page] || PAGE_TITLES[target]) && (!capability || has(capability));
+}
+function defaultPage() { return pageAllowed("chat") ? "chat" : "profile"; }
+function prepareRoute(route) {
+  state.navRoute = route;
+  if (route === "needs-review") {
+    state.semanticWorkspace = "assets"; state.semanticAssetId = null; state.semanticDetailTab = "overview";
+    state.semanticFilters = { ...state.semanticFilters, revisionStatus: "IN_REVIEW", page: 1 };
+  } else if (route === "definitions" || route === "semantics") {
+    state.semanticWorkspace = "assets"; state.semanticAssetId = null; state.semanticDetailTab = "overview";
+    if (state.semanticFilters.revisionStatus === "IN_REVIEW") state.semanticFilters = { ...state.semanticFilters, revisionStatus: "", page: 1 };
+  }
+}
+function pageFromLocation() {
+  const route = location.hash.replace(/^#\/?/u, "") || "chat";
+  if (!pageAllowed(route)) {
+    const fallback = defaultPage(); state.navRoute = fallback;
+    history.replaceState({}, "", `${location.pathname}#/${fallback}`);
+    return fallback;
+  }
+  prepareRoute(route);
+  if (!location.hash) history.replaceState({}, "", `${location.pathname}#/${route}`);
+  return ROUTE_ALIASES[route] || route;
+}
+function go(page, options = {}) {
+  const route = options.route || page;
+  if (!pageAllowed(route)) { toast("你的角色無法使用此功能", "error"); return; }
+  if (options.pendingPrompt !== undefined) state.pendingPrompt = options.pendingPrompt;
+  if (options.resetSession) { state.activeSession = null; state.messages = []; state.result = null; }
+  prepareRoute(route);
+  const hash = `#/${route}`;
+  if (location.hash === hash) { state.page = ROUTE_ALIASES[route] || route; void render(); } else location.hash = hash;
+}
 function invalidate(...keys) { keys.forEach((key) => state.cache.delete(key)); }
 
 async function api(path, options = {}) {
@@ -127,18 +166,71 @@ async function loadSessions() { const data = await api(`/api/v1/sessions${state.
 async function loadMessages(id) { const data = await api(`/api/v1/sessions/${id}/messages`); state.messages = (data.messages || []).map((message) => ({ ...message, metadata: parseMetadata(message.metadata_json) })); }
 function parseMetadata(value) { try { const parsed = JSON.parse(value || "{}"); return parsed && typeof parsed === "object" ? parsed : {}; } catch { return {}; } }
 
-function navItem(page, iconName, label) { return `<button class="nav-item ${state.page === page ? "active" : ""}" data-page="${page}" aria-current="${state.page === page ? "page" : "false"}">${icon(iconName)}<span>${label}</span></button>`; }
-function allowedNavItem(page, iconName, label) { return pageAllowed(page) ? navItem(page, iconName, label) : ""; }
+const NAVIGATION = [
+  {
+    id: "business", label: "Business Workspace", items: [
+      { id: "ask", label: "Ask QueryMind", icon: "chat", page: "chat", route: "chat", requiredCapabilities: ["chat"], activeRoutes: ["chat", "ask", "dashboard"] },
+      { id: "history", label: "History", icon: "history", page: "history", route: "history", requiredCapabilities: ["manage_own_sessions"] },
+      { id: "library", label: "Library", icon: "book", page: "library", route: "library", anyCapabilities: ["view_templates", "manage_own_insights", "view_dictionary"], activeRoutes: ["library", "templates", "insights", "dictionary"] },
+    ],
+  },
+  {
+    id: "governance", label: "Governance", kind: "disclosure", icon: "layers", children: [
+      { id: "definitions", label: "Definitions", icon: "layers", page: "semantics", route: "definitions", requiredCapabilities: ["view_semantics"], activeRoutes: ["definitions", "semantics"] },
+      { id: "needs-review", label: "Needs Review", icon: "check", page: "semantics", route: "needs-review", requiredCapabilities: ["view_semantics", "review_semantics"] },
+      { id: "data-sources", label: "Data Sources", kind: "disclosure", icon: "schema", children: [
+        { id: "schema", label: "Schema Catalog", icon: "schema", page: "schema", route: "schema", requiredCapabilities: ["view_schema"] },
+        { id: "source", label: "Connection Status", icon: "settings", page: "source", route: "source", requiredCapabilities: ["refresh_schema"] },
+      ] },
+      { id: "access", label: "Access", kind: "disclosure", icon: "users", children: [
+        { id: "admin-users", label: "Users & API Keys", icon: "users", page: "admin-users", route: "admin-users", requiredCapabilities: ["manage_users"] },
+        { id: "admin-roles", label: "Roles & Permissions", icon: "shield", page: "admin-roles", route: "admin-roles", requiredCapabilities: ["manage_users"] },
+        { id: "admin-invitations", label: "Invitations", icon: "plus", page: "admin-invitations", route: "admin-invitations", requiredCapabilities: ["manage_users"] },
+      ] },
+      { id: "audit-system", label: "Audit & System", kind: "disclosure", icon: "settings", children: [
+        { id: "admin-overview", label: "Workspace Overview", icon: "home", page: "admin-overview", route: "admin-overview", requiredCapabilities: ["manage_users"] },
+        { id: "admin-audit", label: "Audit Log", icon: "usage", page: "admin-audit", route: "admin-audit", requiredCapabilities: ["manage_users"] },
+        { id: "admin-system", label: "System Status", icon: "settings", page: "admin-system", route: "admin-system", requiredCapabilities: ["manage_users"] },
+        { id: "admin-semantic-authorities", label: "Semantic Authorities", icon: "users", page: "admin-semantic-authorities", route: "admin-semantic-authorities", requiredCapabilities: ["manage_semantic_governance"] },
+        { id: "admin-semantic-policies", label: "Approval Policies", icon: "shield", page: "admin-semantic-policies", route: "admin-semantic-policies", requiredCapabilities: ["manage_semantic_governance"] },
+      ] },
+    ],
+  },
+];
+function navNodeAllowed(node) {
+  if (node.children) return node.children.some(navNodeAllowed);
+  if ((node.requiredCapabilities || []).some((capability) => !has(capability))) return false;
+  if (node.anyCapabilities?.length && !node.anyCapabilities.some(has)) return false;
+  return true;
+}
+function navNodeActive(node) {
+  if (node.children) return node.children.some(navNodeActive);
+  return (node.activeRoutes || [node.route]).includes(state.navRoute);
+}
+function navItem(item, nested = false) {
+  const active = navNodeActive(item);
+  return `<button class="nav-item${nested ? " nav-item-nested" : ""}${active ? " active" : ""}" data-page="${item.page}" data-route="${item.route}" aria-current="${active ? "page" : "false"}">${icon(item.icon)}<span>${esc(item.label)}</span></button>`;
+}
+function navDisclosure(node, nested = false) {
+  const children = node.children.filter(navNodeAllowed);
+  if (!children.length) return "";
+  const active = children.some(navNodeActive);
+  const className = `nav-disclosure${nested ? " nav-disclosure-nested" : " nav-disclosure-primary"}${active ? " has-active" : ""}`;
+  return `<details class="${className}" data-nav-group="${node.id}" ${active ? "open" : ""}><summary><span class="nav-disclosure-label">${icon(node.icon)}<span>${esc(node.label)}</span></span><span class="nav-disclosure-chevron" aria-hidden="true">›</span></summary><div class="nav-children">${children.map((child) => child.children ? navDisclosure(child, true) : navItem(child, true)).join("")}</div></details>`;
+}
+function navigationMarkup() {
+  const business = NAVIGATION.find((group) => group.id === "business");
+  const governance = NAVIGATION.find((group) => group.id === "governance");
+  return `<div class="nav-section">${esc(business.label)}</div>${business.items.filter(navNodeAllowed).map((item) => navItem(item)).join("")}${navDisclosure(governance)}`;
+}
 function shell(content, page = state.page) {
   const [title, subtitle] = PAGE_TITLES[page] || PAGE_TITLES.dashboard;
-  const source = pageAllowed("source") ? `<div class="nav-section">資料治理</div>${navItem("source", "schema", "資料來源")}` : "";
-  const admin = pageAllowed("admin-overview") ? `<div class="nav-section">工作區管理</div>${navItem("admin-overview", "settings", "管理總覽")}${navItem("admin-users", "users", "使用者")}${navItem("admin-roles", "shield", "角色與權限")}${has("manage_semantic_governance") ? `<div class="nav-section">語意治理</div>${navItem("admin-semantic-authorities", "users", "Authorities")}${navItem("admin-semantic-policies", "shield", "Approval Policies")}` : ""}${navItem("admin-invitations", "plus", "邀請")}${navItem("admin-audit", "usage", "稽核紀錄")}${navItem("admin-system", "settings", "系統設定")}` : "";
   const initial = esc((state.user?.displayName || state.user?.email || "Q").slice(0, 1).toUpperCase());
   return `<div class="app-shell ${state.sidebarOpen ? "sidebar-open" : ""}">
     <button class="scrim" data-action="close-sidebar" aria-label="關閉選單"></button>
     <aside class="sidebar"><div class="brand"><span class="brand-mark">Q</span><span>QueryMind</span></div>
-      <nav aria-label="主要選單"><div class="nav-section">分析工作區</div>${navItem("dashboard", "home", "工作總覽")}${allowedNavItem("chat", "chat", "AI 對話")}${allowedNavItem("schema", "schema", "資料綱要")}${allowedNavItem("dictionary", "book", "資料字典")}${allowedNavItem("templates", "template", "查詢範本")}${allowedNavItem("insights", "insight", "我的洞察")}${allowedNavItem("usage", "usage", "我的用量")}${source}${admin}</nav>
-      <button class="account-card" data-page="profile"><span class="avatar">${initial}</span><span><b>${esc(state.user?.displayName || "QueryMind user")}</b><small>${esc(state.user?.roleName || "member")}</small></span>${icon("chevron")}</button>
+      <nav aria-label="主要選單">${navigationMarkup()}</nav>
+      <button class="account-card${["profile", "usage"].includes(state.page) ? " active" : ""}" data-page="profile" aria-current="${["profile", "usage"].includes(state.page) ? "page" : "false"}"><span class="avatar">${initial}</span><span><b>${esc(state.user?.displayName || "QueryMind user")}</b><small>${esc(state.user?.roleName || "member")}</small></span>${icon("chevron")}</button>
     </aside>
     <main class="main"><header class="topbar"><div class="topbar-left"><button class="mobile-menu" data-action="open-sidebar" aria-label="開啟選單">${icon("more")}</button><div><h1>${title}</h1><p>${subtitle}</p></div></div><div class="topbar-right"><span class="readonly-chip">${icon("shield")}唯讀 D1</span><button class="profile-trigger" data-page="profile" aria-label="開啟個人設定"><span class="avatar">${initial}</span></button></div></header><div class="page">${content}</div></main></div>`;
 }
@@ -243,51 +335,139 @@ function chartFor(rows) {
   return `<div class="chart" aria-label="${esc(numeric)} 圖表">${items.map((item) => `<div class="chart-row"><span title="${esc(item.label)}">${esc(item.label)}</span><div class="chart-track"><progress max="100" value="${Math.max(2, Math.round(Math.abs(item.value) / max * 100))}" aria-label="${esc(item.label)}：${esc(item.value)}"></progress></div><b>${esc(new Intl.NumberFormat("zh-TW", { maximumFractionDigits: 2 }).format(item.value))}</b></div>`).join("")}</div>`;
 }
 function legacyResultPanel(result, key) {
-  const rows = result.rows || []; const columns = [...new Set(rows.flatMap((row) => Object.keys(row)))]; const current = state.resultTabs.get(key) || "table";
-  const tab = (id, label, disabled = false) => `<button class="result-tab ${current === id ? "active" : ""}" data-result-tab="${key}:${id}" ${disabled ? "disabled" : ""}>${label}</button>`;
-  const rowsHtml = rows.slice(0, 100).map((row) => `<tr>${columns.map((column) => `<td>${esc(row[column])}</td>`).join("")}</tr>`).join("");
-  const canChart = Boolean(rows.length && columns.some((column) => rows.some((row) => Number.isFinite(Number(row[column])))));
-  const sql = typeof result.sql === "string" && result.sql.trim() ? result.sql.trim() : undefined;
-  return `<section class="query-result"><header><div><span class="result-kicker">查詢結果</span><b>${Number(result.rowCount ?? rows.length).toLocaleString()} 筆資料${result.truncated ? "（僅顯示前 100 筆）" : ""}</b></div><div class="result-actions">${result.maskedColumns?.length ? status(`已遮罩 ${result.maskedColumns.length} 欄`, "safe") : ""}${has("export") && sql ? `<button class="icon-button" title="匯出 CSV" aria-label="匯出 CSV" data-export="${encodeURIComponent(sql)}">${icon("export")}</button>` : ""}</div></header><nav class="result-tabs" aria-label="查詢結果檢視">${tab("table", "表格")}${tab("chart", "圖表", !canChart)}${sql ? tab("sql", "SQL") : ""}</nav><div class="result-content">${current === "chart" ? chartFor(rows) : current === "sql" && sql ? `<div class="sql-panel"><button class="copy-sql" data-copy-sql="${encodeURIComponent(sql)}">${icon("copy")}複製 SQL</button><pre>${esc(sql)}</pre></div>` : table(columns.map(resultColumnLabel), rowsHtml, "query-table")}</div></section>`;
+  return resultPanel(result, key);
 }
 
 function sessionRow(session) { return `<div class="session-item ${session.id === state.activeSession ? "selected" : ""}"><button class="session-main" data-session="${session.id}"><span><b>${esc(session.title || "未命名對話")}</b><small>${session.pinned ? "已釘選 · " : ""}${shortDate(session.updatedAt)}</small></span></button><div class="session-actions"><button title="${session.pinned ? "取消釘選" : "釘選"}" aria-label="${session.pinned ? "取消釘選" : "釘選"}" data-session-action="pin" data-session-id="${session.id}" data-session-value="${session.pinned}">${icon("pin")}</button><button title="重新命名" aria-label="重新命名" data-session-action="rename" data-session-id="${session.id}">${icon("edit")}</button><button title="${state.archiveMode ? "還原對話" : "封存對話"}" aria-label="${state.archiveMode ? "還原對話" : "封存對話"}" data-session-action="archive" data-session-id="${session.id}" data-session-value="${state.archiveMode}">${icon("archive")}</button>${state.archiveMode ? `<button title="永久刪除" aria-label="永久刪除" data-session-action="delete" data-session-id="${session.id}">${icon("trash")}</button>` : ""}</div></div>`; }
-function explainabilityPanel(result, key) {
+function evidenceValue(value) {
+  const normalized = String(value ?? "").trim().toLowerCase();
+  const businessLabels = { "sales amount": "銷售額", product: "商品", order_count: "訂單數量", revenue: "營收" };
+  const label = businessLabels[normalized] || value;
+  return `<span>${esc(label)}</span>`;
+}
+
+function explainabilityPanel(result) {
   const explain = result.explainability;
   if (!explain) return "";
   const understanding = explain.understanding || {};
   const sources = explain.sources || {};
   const governance = sources.governance || {};
   const summary = explain.summary || {};
-  const list = (values, empty = "—", targetType = "") => Array.isArray(values) && values.length ? values.map((value) => `<li class="explain-evidence-item"><span>${esc(value)}</span>${targetType && explain.feedback?.supported ? `<button type="button" class="evidence-feedback" data-feedback-inline data-feedback-run="${esc(explain.feedback.queryRunId)}" data-feedback-target-type="${esc(targetType)}" data-feedback-target-ref="${esc(value)}" aria-label="針對${esc(value)}提出調整">調整</button>` : ""}</li>`).join("") : `<li class="muted">${empty}</li>`;
   const feedbackId = explain.feedback?.supported ? explain.feedback.queryRunId : "";
-  const feedback = feedbackId ? `<div class="query-feedback" data-feedback-box="${esc(feedbackId)}" data-feedback-state="IDLE"><div class="feedback-intro"><b>這份結果符合你的需求嗎？</b><small>回饋只會與本次查詢連結，不會改變資料權限。</small></div><div class="feedback-actions"><button type="button" class="button compact" data-feedback-rating="positive" aria-label="符合需求">✓ 符合需求</button><button type="button" class="button compact" data-feedback-rating="negative" aria-label="調整這份結果">調整一下</button></div><div class="feedback-negative" hidden><label>哪一部分需要調整？<select data-feedback-target aria-label="選擇需要調整的部分">${feedbackTargetOptions(explain)}</select></label><label>問題類型（選填）<select data-feedback-category aria-label="選擇問題類型"><option value="">未指定</option>${feedbackCategoryOptions()}</select></label><label class="feedback-correction-field">你希望怎麼調整？（選填）<textarea data-feedback-correction maxlength="1000" placeholder="例如：我想看排除取消訂單後的銷售額"></textarea></label><button type="button" class="button primary compact" data-feedback-submit>送出回饋</button></div></div>` : "";
   const explanationSql = typeof explain.explanation?.sql === "string" && explain.explanation.sql.trim() ? explain.explanation.sql.trim() : undefined;
-  const sourceRows = (sources.tables || []).map((source) => `<li class="explain-evidence-item"><span><b>${esc(source.label || source.name)}</b><small>${esc(source.name)}</small></span>${feedbackId ? `<button type="button" class="evidence-feedback" data-feedback-inline data-feedback-run="${esc(feedbackId)}" data-feedback-target-type="SOURCE" data-feedback-target-ref="${esc(source.name)}" aria-label="針對${esc(source.label || source.name)}提出調整">調整</button>` : ""}</li>`).join("") || "<li class=muted>已授權資料來源</li>";
-  const calculationAction = feedbackId && explain.explanation?.business ? `<button type="button" class="evidence-feedback" data-feedback-inline data-feedback-run="${esc(feedbackId)}" data-feedback-target-type="CALCULATION" data-feedback-target-ref="calculation" aria-label="針對計算方式提出調整">調整計算方式</button>` : "";
-  const intentAction = feedbackId && understanding.intent ? `<button type="button" class="evidence-feedback" data-feedback-inline data-feedback-run="${esc(feedbackId)}" data-feedback-target-type="INTENT" data-feedback-target-ref="${esc(understanding.intent)}" aria-label="針對問題理解提出調整">調整理解</button>` : "";
+  const feedbackAction = (type, value) => feedbackId && value ? `<button type="button" class="evidence-feedback" data-feedback-inline data-feedback-run="${esc(feedbackId)}" data-feedback-target-type="${type}" data-feedback-target-ref="${esc(value)}" aria-label="針對${esc(value)}提出調整">調整</button>` : "";
+  const values = (items, type) => Array.isArray(items) ? items.filter((value) => typeof value === "string" && value.trim()).map((value) => `<li>${evidenceValue(value)}${feedbackAction(type, value)}</li>`).join("") : "";
+  const fact = (label, items, type) => {
+    const content = values(items, type);
+    return content ? `<div><dt>${label}</dt><dd><ul>${content}</ul></dd></div>` : "";
+  };
+  const understandingFacts = [
+    fact("指標", understanding.metrics, "METRIC"),
+    fact("依據分組", understanding.dimensions, "DIMENSION"),
+    fact("條件", understanding.filters, "FILTER"),
+    understanding.timeRange ? `<div><dt>時間</dt><dd>${esc(understanding.timeRange)}</dd></div>` : "",
+  ].filter(Boolean).join("");
+  const understandingSection = understandingFacts ? `<section class="evidence-section"><h3>問題理解</h3><dl class="explain-facts">${understandingFacts}</dl></section>` : "";
+  const sourceRows = (Array.isArray(sources.tables) ? sources.tables : []).filter((source) => source?.name || source?.label).map((source) => `<li><span><b>${esc(source.label || source.name)}</b><small>${esc(source.name || "")}</small></span>${feedbackAction("SOURCE", source.name)}</li>`).join("");
   const semantic = explain.semanticEvidence;
-  const semanticPanel = !semantic ? `<section class="semantic-evidence semantic-evidence-legacy"><span class="explain-label">使用的企業語意</span><p>此歷史查詢尚未記錄企業語意證據。</p></section>` : semantic.mode !== "USED" ? `<section class="semantic-evidence"><span class="explain-label">使用的企業語意</span><p>此查詢未使用已核準的企業語意定義。</p></section>` : `<section class="semantic-evidence"><div class="semantic-evidence-head"><div><span class="explain-label">使用的企業語意</span><b>本次執行實際採用的已核準定義</b></div><span class="governance-badge">${icon("shield")}可追溯</span></div><div class="semantic-evidence-list">${semantic.selections.map((selection) => { const sources = (selection.sources || []).map((source) => `${source.table}${source.column ? `.${source.column}` : ""}`).join("、"); const detail = selection.metricAstSummary || selection.definition || (selection.relationshipRefs || []).join("、"); return `<article class="semantic-evidence-card"><div><b>${esc(selection.label || selection.canonicalName)}</b><small>${esc(selection.semanticType)}${selection.domain ? ` · ${esc(selection.domain)}` : ""} · Revision ${esc(selection.revisionId)}</small></div>${selection.grain ? `<p><span>Grain</span>${esc(selection.grain)}</p>` : ""}${detail ? `<p><span>定義</span>${esc(detail)}</p>` : ""}${sources ? `<p><span>來源</span>${esc(sources)}</p>` : ""}<details><summary>技術證據</summary><dl><div><dt>Asset ID</dt><dd>${esc(selection.assetId)}</dd></div><div><dt>Revision ID</dt><dd>${esc(selection.revisionId)}</dd></div><div><dt>Registry Version</dt><dd>${esc(semantic.registryVersion)}</dd></div>${semantic.schemaSnapshotId ? `<div><dt>Schema Snapshot</dt><dd>${esc(semantic.schemaSnapshotId)}</dd></div>` : ""}</dl></details></article>`; }).join("")}</div></section>`;
-  return `<section class="query-explainability"><header class="explain-head"><div><span class="result-kicker">查詢說明</span><b>${esc(summary.headline || "結果摘要")}</b></div><span class="governance-badge">${icon("shield")}已套用治理</span></header><div class="explain-grid"><article><div class="explain-calc-head"><span class="explain-label">Query Understanding</span>${intentAction}</div><h4>${esc(understanding.intent || "資料查詢")}</h4><dl class="explain-facts"><div><dt>指標</dt><dd><ul>${list(understanding.metrics, "—", "METRIC")}</ul></dd></div><div><dt>維度</dt><dd><ul>${list(understanding.dimensions, "—", "DIMENSION")}</ul></dd></div><div><dt>條件</dt><dd><ul>${list(understanding.filters, "—", "FILTER")}</ul></dd></div><div><dt>時間</dt><dd>${esc(understanding.timeRange || "未指定")}</dd></div></dl></article><article><span class="explain-label">Data Sources / Governance</span><ul class="source-list">${sourceRows}</ul><div class="governance-chips"><span>${governance.scopeApplied ? "範圍已套用" : "範圍未指定"}</span><span>${governance.rowPolicyApplied ? "資料列規則已套用" : "資料列規則已檢查"}</span><span>${governance.columnPolicyApplied ? "欄位權限已檢查" : "欄位權限未指定"}</span><span>${governance.dlpApplied ? "敏感欄位已遮罩" : "DLP 未套用"}</span></div></article><article><div class="explain-calc-head"><span class="explain-label">How calculated</span>${calculationAction}</div><p>${esc(explain.explanation?.business || "此查詢已完成唯讀驗證與結果遮罩。")}</p><ul class="summary-list">${list(summary.highlights)}</ul>${summary.caveats?.length ? `<div class="explain-caveats"><ul>${list(summary.caveats)}</ul></div>` : ""}</article></div>${semanticPanel}${explanationSql && explain.explanation?.rawSqlAvailable ? `<details class="sql-disclosure" open><summary>檢視已驗證 SQL</summary><pre>${esc(explanationSql)}</pre></details>` : ""}${feedback}</section>`;
+  const semanticSection = semantic?.mode === "USED" && Array.isArray(semantic.selections) && semantic.selections.length
+    ? `<div class="definition-evidence"><h4>使用的已核准定義</h4><ul>${semantic.selections.map((selection) => {
+      const semanticSources = (selection.sources || []).map((source) => `${source.table}${source.column ? `.${source.column}` : ""}`).join("、");
+      const detail = selection.metricAstSummary || selection.definition || (selection.relationshipRefs || []).join("、");
+      return `<li><div><b>${esc(selection.label || selection.canonicalName)}</b><small>${esc(selection.semanticType)}${selection.domain ? ` · ${esc(selection.domain)}` : ""}</small>${detail ? `<p>${esc(detail)}</p>` : ""}${semanticSources ? `<small>來源：${esc(semanticSources)}</small>` : ""}</div><details><summary>追溯資料</summary><dl><div><dt>Asset</dt><dd>${esc(selection.assetId)}</dd></div><div><dt>Revision</dt><dd>${esc(selection.revisionId)}</dd></div><div><dt>Registry version</dt><dd>${esc(semantic.registryVersion)}</dd></div>${semantic.schemaSnapshotId ? `<div><dt>Schema snapshot</dt><dd>${esc(semantic.schemaSnapshotId)}</dd></div>` : ""}</dl></details></li>`;
+    }).join("")}</ul></div>`
+    : semantic?.mode === "NOT_USED" ? `<p class="semantic-not-used">本次查詢未使用已核准的企業定義。</p>` : "";
+  const dataSection = sourceRows || semanticSection ? `<section class="evidence-section"><h3>使用的資料</h3>${sourceRows ? `<ul class="source-list">${sourceRows}</ul>` : ""}${semanticSection}</section>` : "";
+  const governanceItems = [
+    governance.scopeApplied === true ? "資料範圍已套用" : "",
+    governance.rowPolicyApplied === true ? "資料列範圍規則已套用" : "",
+    governance.columnPolicyApplied === true ? "欄位權限已檢查" : "",
+    governance.dlpApplied === true ? "敏感資料檢查已完成" : "",
+  ].filter(Boolean);
+  const governanceSection = governanceItems.length ? `<section class="evidence-section"><h3>治理檢查</h3><ul class="governance-chips">${governanceItems.map((item) => `<li>${icon("check")}<span>${esc(item)}</span></li>`).join("")}</ul></section>` : "";
+  const highlights = Array.isArray(summary.highlights) ? summary.highlights.filter((item) => typeof item === "string" && item.trim()) : [];
+  const caveats = Array.isArray(summary.caveats) ? summary.caveats.filter((item) => typeof item === "string" && item.trim()) : [];
+  const calculation = explain.explanation?.business;
+  const calculationSection = calculation || highlights.length || caveats.length ? `<section class="evidence-section"><h3>計算與備註</h3>${calculation ? `<p class="calculation-copy">${esc(calculation)}${feedbackAction("CALCULATION", "calculation")}</p>` : ""}${highlights.length ? `<ul class="summary-list">${highlights.map((item) => `<li>${esc(item)}</li>`).join("")}</ul>` : ""}${caveats.length ? `<ul class="explain-caveats">${caveats.map((item) => `<li>${esc(item)}</li>`).join("")}</ul>` : ""}</section>` : "";
+  const sqlAvailable = explain.explanation?.rawSqlAvailable === true && typeof explanationSql === "string";
+  const advanced = sqlAvailable ? `<details class="sql-disclosure advanced-disclosure"><summary>進階 · 已驗證 SQL</summary><div class="advanced-sql-content"><button class="copy-sql" data-copy-sql="${encodeURIComponent(explanationSql)}">${icon("copy")}複製 SQL</button><pre>${esc(explanationSql)}</pre></div></details>` : "";
+  const metrics = Array.isArray(understanding.metrics) ? understanding.metrics.filter(Boolean) : [];
+  const dimensions = Array.isArray(understanding.dimensions) ? understanding.dimensions.filter(Boolean) : [];
+  const preview = [metrics.length ? `指標：${metrics.map((value) => value === "sales amount" ? "銷售額" : value).join("、")}` : "", dimensions.length ? `依${dimensions.map((value) => value === "product" ? "商品" : value).join("、")}分組` : ""].filter(Boolean).join(" · ") || "查看資料來源與治理檢查";
+  return `<details class="query-explainability" data-explainability><summary class="explain-summary"><span><b>為什麼是這個答案？</b><small>${esc(preview)}</small></span><span class="explain-toggle-label">查看依據</span></summary><div class="explainability-body">${understandingSection}${dataSection}${governanceSection}${calculationSection}${advanced}</div></details>`;
+}
+
+function feedbackPanel(explain) {
+  const feedbackId = explain?.feedback?.supported ? explain.feedback.queryRunId : "";
+  if (!feedbackId) return "";
+  return `<div class="query-feedback" data-feedback-box="${esc(feedbackId)}" data-feedback-state="IDLE"><div class="feedback-intro"><b>這個回答有幫助嗎？</b><small>回饋只連結到本次成功查詢，不會改變資料權限。</small></div><div class="feedback-actions"><button type="button" class="button compact" data-feedback-rating="positive" aria-label="符合需求">✓ 符合需求</button><button type="button" class="button compact" data-feedback-rating="negative" aria-label="調整這份結果">調整一下</button></div><div class="feedback-negative" hidden><label>哪一部分需要調整？<select data-feedback-target aria-label="選擇需要調整的部分">${feedbackTargetOptions(explain)}</select></label><label>問題類型（選填）<select data-feedback-category aria-label="選擇問題類型"><option value="">未指定</option>${feedbackCategoryOptions()}</select></label><label class="feedback-correction-field">你希望怎麼調整？（選填）<textarea data-feedback-correction maxlength="1000" placeholder="例如：我想看排除取消訂單後的銷售額"></textarea></label><button type="button" class="button primary compact" data-feedback-submit>送出回饋</button></div></div>`;
 }
 
 function resultPanel(result, key) {
-  const rows = result.rows || []; const columns = [...new Set(rows.flatMap((row) => Object.keys(row)))]; const current = state.resultTabs.get(key) || "table";
+  const rows = Array.isArray(result.rows) ? result.rows : []; const columns = [...new Set(rows.flatMap((row) => Object.keys(row)))];
   const rawSqlAvailable = result.explainability ? Boolean(result.explainability.explanation?.rawSqlAvailable) : has("view_schema");
   const sqlCandidate = rawSqlAvailable ? (result.explainability?.explanation?.sql || result.sql) : undefined;
   const sql = typeof sqlCandidate === "string" && sqlCandidate.trim() ? sqlCandidate.trim() : undefined;
-  const tab = (id, label, disabled = false) => `<button class="result-tab ${current === id ? "active" : ""}" data-result-tab="${key}:${id}" ${disabled ? "disabled" : ""}>${label}</button>`;
   const rowsHtml = rows.slice(0, 100).map((row) => `<tr>${columns.map((column) => `<td>${esc(row[column])}</td>`).join("")}</tr>`).join("");
   const canChart = Boolean(rows.length && columns.some((column) => rows.some((row) => Number.isFinite(Number(row[column])))));
-  return `${explainabilityPanel(result, key)}<section class="query-result"><header><div><span class="result-kicker">查詢結果</span><b>${Number(result.rowCount ?? rows.length).toLocaleString()} 筆資料${result.truncated ? "（僅顯示前 100 筆）" : ""}</b></div><div class="result-actions">${result.maskedColumns?.length ? status(`已遮罩 ${result.maskedColumns.length} 欄`, "safe") : ""}${has("export") && sql ? `<button class="icon-button" title="匯出 CSV" aria-label="匯出 CSV" data-export="${encodeURIComponent(sql)}">${icon("export")}</button>` : ""}</div></header><nav class="result-tabs" aria-label="查詢結果檢視">${tab("table", "表格")}${tab("chart", "圖表", !canChart)}${sql ? tab("sql", "SQL") : ""}</nav><div class="result-content">${current === "chart" ? chartFor(rows) : current === "sql" && sql ? `<div class="sql-panel"><button class="copy-sql" data-copy-sql="${encodeURIComponent(sql)}">${icon("copy")}複製 SQL</button><pre>${esc(sql)}</pre></div>` : table(columns.map(resultColumnLabel), rowsHtml, "query-table")}</div></section>`;
+  const current = state.resultTabs.get(key) === "chart" && canChart ? "chart" : "table";
+  const count = Number(result.rowCount ?? rows.length);
+  const noRows = rows.length === 0 && count === 0;
+  const resultContent = noRows
+    ? `<div class="result-empty-state"><b>查詢成功，沒有符合條件的資料。</b><p>可以調整條件，或接著提出另一個問題。</p></div>`
+    : rows.length === 0 ? `<div class="result-empty-state"><b>查詢完成，但沒有可供顯示的結果列。</b></div>`
+      : current === "chart" ? chartFor(rows) : `${table(columns.map(resultColumnLabel), rowsHtml, "query-table")}<small class="table-scroll-hint">左右滑動檢視完整表格</small>`;
+  const tabs = rows.length ? `<nav class="result-tabs" aria-label="查詢結果檢視"><button class="result-tab ${current === "table" ? "active" : ""}" data-result-tab="${key}:table">表格</button><button class="result-tab ${current === "chart" ? "active" : ""}" data-result-tab="${key}:chart" ${!canChart ? "disabled" : ""}>圖表</button></nav>` : "";
+  const truncationNote = result.truncated ? " · 僅顯示前 100 筆" : "";
+  const masked = result.maskedColumns?.length ? status(`已遮罩 ${result.maskedColumns.length} 欄`, "safe") : "";
+  const exportAction = has("export") && sql ? `<button class="icon-button" title="匯出 CSV" aria-label="匯出 CSV" data-export="${encodeURIComponent(sql)}">${icon("export")}</button>` : "";
+  const queryRunId = result.queryRunId || result.explainability?.queryRunId || "";
+  const saveAction = has("manage_own_insights") && queryRunId
+    ? state.savedAnalysisRuns.has(queryRunId)
+      ? `<span class="saved-analysis-status" role="status">已儲存</span><a class="text-button" href="#/library" data-saved-analysis-run="${esc(queryRunId)}">查看 Library</a>`
+      : `<button class="text-button save-analysis-action" data-save-query-run="${esc(queryRunId)}" data-save-prompt="${esc(result.prompt || "")}" ${state.savingAnalysisRuns.has(queryRunId) ? "disabled" : ""}>儲存至 Library</button>`
+    : "";
+  return `<section class="query-result answer-result" data-query-result><header><div><span class="result-kicker">結果</span><b>${count.toLocaleString()} 筆資料</b>${truncationNote ? `<small>${truncationNote}</small>` : ""}</div><div class="result-actions">${masked}${saveAction}${exportAction}</div></header>${tabs}<div class="result-content">${resultContent}</div></section>${explainabilityPanel(result)}${feedbackPanel(result.explainability)}`;
 }
 
 async function renderChat() {
   await loadSessions();
   if (state.activeSession && !state.messages.length) await loadMessages(state.activeSession);
-  const transcript = !state.activeSession ? empty("開始一個資料問題", "輸入自然語言問題，QueryMind 會使用已同步的 Schema 和商業字典產生受控的唯讀查詢。", `<div class="suggestions"><button data-prompt="請依商品列出銷售額">依商品列出銷售額</button><button data-prompt="目前有多少筆未取消訂單？">未取消訂單數</button><button data-prompt="請找出最近處理中的客服案件">客服案件概況</button></div>`) : `${state.messages.map((message, index) => `<article class="message ${message.role}"><div class="message-avatar">${message.role === "user" ? esc((state.user?.displayName || "你").slice(0, 1)) : "Q"}</div><div class="message-content"><div class="message-meta"><b>${message.role === "user" ? "你" : "QueryMind"}</b><time>${shortDate(message.created_at)}</time></div>${message.role === "assistant" ? `<div class="message-answer">${renderMarkdown(message.content)}</div>` : `<p>${esc(message.content)}</p>`}${message.metadata?.sql ? resultPanel(message.metadata, message.id || `stored-${index}`) : ""}</div></article>`).join("")}${state.result ? `<article class="message assistant"><div class="message-avatar">Q</div><div class="message-content"><div class="message-meta"><b>QueryMind</b><time>剛剛</time></div><div class="message-answer">${renderMarkdown(state.result.answer || "查詢完成。")}</div>${resultPanel(state.result, state.result.id || "transient")}</div></article>` : ""}${state.sending ? `<article class="message assistant thinking"><div class="message-avatar">Q</div><div class="message-content"><b>QueryMind 正在分析資料</b><span><i></i><i></i><i></i></span></div></article>` : ""}`;
+  const transcript = !state.activeSession
+    ? empty("開始一個資料問題", "輸入自然語言問題，QueryMind 會使用已同步的 Schema 和商業字典產生受控的唯讀查詢。", `<div class="suggestions"><button data-prompt="請依商品列出銷售額">依商品列出銷售額</button><button data-prompt="目前有多少筆未取消訂單？">未取消訂單數</button><button data-prompt="請找出最近處理中的客服案件">客服案件概況</button></div>`)
+    : `${state.messages.map((message, index) => {
+      const previousPrompt = [...state.messages.slice(0, index)].reverse().find((item) => item.role === "user")?.content || "";
+      const metadata = message.metadata?.sql ? { ...message.metadata, prompt: previousPrompt } : message.metadata;
+      return `<article class="message ${message.role}"><div class="message-avatar">${message.role === "user" ? esc((state.user?.displayName || "你").slice(0, 1)) : "Q"}</div><div class="message-content"><div class="message-meta"><b>${message.role === "user" ? "你" : "QueryMind"}</b><time>${shortDate(message.created_at)}</time></div>${message.role === "assistant" ? `<div class="message-answer">${renderMarkdown(message.content)}</div>` : `<p>${esc(message.content)}</p>`}${metadata?.sql ? resultPanel(metadata, message.id || `stored-${index}`) : ""}</div></article>`;
+    }).join("")}${state.result ? `<article class="message assistant"><div class="message-avatar">Q</div><div class="message-content"><div class="message-meta"><b>QueryMind</b><time>剛剛</time></div><div class="message-answer">${renderMarkdown(state.result.answer || "查詢完成。")}</div>${resultPanel(state.result, state.result.id || "transient")}</div></article>` : ""}${state.sending ? `<article class="message assistant thinking"><div class="message-avatar">Q</div><div class="message-content"><b>QueryMind 正在分析資料</b><span><i></i><i></i><i></i></span></div></article>` : ""}`;
   const sessionList = state.sessions.map(sessionRow).join("") || `<p class="rail-empty">${state.archiveMode ? "沒有封存的對話" : "尚無對話紀錄"}</p>`;
   return shell(`<section class="chat-workspace"><aside class="session-rail"><header><div><span class="eyebrow">${state.archiveMode ? "封存對話" : "對話紀錄"}</span><b>${state.archiveMode ? "已封存" : "Sessions"}</b></div><button class="icon-button" data-action="create-session" aria-label="建立新對話" title="建立新對話">${icon("plus")}</button></header><div class="session-list">${sessionList}</div><button class="archive-toggle" data-action="toggle-archive">${icon("archive")}${state.archiveMode ? "返回目前對話" : "查看封存對話"}</button></aside><div class="chat-canvas"><header class="chat-head"><div><span class="eyebrow">AI analyst</span><h2>${state.activeSession ? esc(state.sessions.find((session) => session.id === state.activeSession)?.title || "分析對話") : "Ask your data"}</h2></div>${state.activeSession ? `<button class="button secondary compact" data-action="create-session">${icon("plus")}新對話</button>` : ""}</header><div class="conversation" aria-live="polite">${transcript}</div><form id="chat-form" class="composer"><label class="sr-only" for="chat-prompt">輸入資料問題</label><textarea id="chat-prompt" name="prompt" placeholder="請輸入你的問題…" maxlength="8000" ${state.sending || state.archiveMode ? "disabled" : ""}></textarea><div><small>${state.archiveMode ? "請先返回目前對話才能提問" : "結果限於唯讀 D1；敏感欄位會自動遮罩。"}</small><button class="button primary send-button" ${state.sending || state.archiveMode ? "disabled" : ""}>${state.sending ? "分析中…" : `${icon("send")}送出`}</button></div></form></div></section>`, "chat");
+}
+
+async function renderHistory() {
+  await loadSessions();
+  const sessionList = state.sessions.map(sessionRow).join("") || `<p class="rail-empty">${state.archiveMode ? "沒有封存的對話" : "尚無對話紀錄"}</p>`;
+  return shell(`<section class="history-workspace"><aside class="session-rail"><header><div><span class="eyebrow">Conversation history</span><b>${state.archiveMode ? "已封存" : "History"}</b></div><button class="icon-button" data-action="create-session" aria-label="開始新對話" title="開始新對話">${icon("plus")}</button></header><div class="session-list">${sessionList}</div><button class="archive-toggle" data-action="toggle-archive">${icon("archive")}${state.archiveMode ? "返回目前對話" : "查看封存對話"}</button></aside></section>`, "history");
+}
+
+async function renderLibrary() {
+  const [insightData, templateData] = await Promise.all([
+    has("manage_own_insights") ? load("insights", "/api/v1/insights") : Promise.resolve({ insights: [] }),
+    has("view_templates") ? load("templates", "/api/v1/templates") : Promise.resolve({ templates: [] }),
+  ]);
+  const insights = [...(insightData.insights || [])].sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")));
+  const templates = templateData.templates || [];
+  const analysisCards = insights.map((item) => `<article class="saved-analysis-card" data-insight-item="${esc(item.id)}"><div class="saved-analysis-copy"><span class="eyebrow">Saved analysis · 儲存於 ${esc(fmtDate(item.createdAt))}</span><h3 title="${esc(item.title)}">${esc(item.title)}</h3><p class="saved-analysis-question">${esc(item.prompt || "原始問題未提供")}</p>${item.description ? `<p class="saved-analysis-note">${esc(item.description)}</p>` : ""}</div><div class="saved-analysis-actions"><button class="button secondary compact" data-run-insight="${esc(item.id)}">重新執行</button><button class="text-button" data-rename-insight="${esc(item.id)}">重新命名</button><button class="text-button danger-text" data-delete-insight="${esc(item.id)}">刪除</button></div></article>`).join("");
+  const savedAnalysis = has("manage_own_insights")
+    ? `<section class="panel saved-analysis-section"><header class="panel-head"><div><span class="eyebrow">Personal Library</span><h2>已儲存的分析</h2><p>保存問題與來源脈絡；重新執行時會依你目前的權限重新驗證。</p></div><div class="library-section-head-actions"><span class="saved-count">${insights.length} 項</span>${button("進階管理", { attrs: 'data-page="insights"' })}</div></header>${analysisCards ? `<div class="saved-analysis-list">${analysisCards}</div>` : `<div class="library-empty"><b>還沒有已儲存的分析</b><p>先提出一個資料問題；遇到有用的結果時，可以直接從答案旁儲存到這裡。</p>${button("Ask QueryMind", { kind: "primary", attrs: 'data-page="chat"', icon: "chat" })}</div>`}</section>`
+    : "";
+  const templateSection = has("view_templates")
+    ? `<section class="panel library-section"><header class="panel-head"><div><span class="eyebrow">Reusable starting points</span><h2>查詢範本</h2><p>範本是可重複使用的問題起點，與個人已儲存的分析分開管理。</p></div><span class="saved-count">${templates.length} 項</span></header><div class="library-section-footer">${button("瀏覽查詢範本", { attrs: 'data-page="templates"' })}</div></section>`
+    : "";
+  const dictionarySection = has("view_dictionary")
+    ? `<details class="panel library-legacy"><summary><span><span class="eyebrow">Legacy / secondary</span><b>商業詞彙字典</b><small>相容性入口；不等同已核准的 Semantic 定義。</small></span><span class="library-legacy-chevron" aria-hidden="true">展開</span></summary><div class="library-legacy-content"><p>此頁保留既有工作區詞彙管理，不代表已核准的 Semantic 定義。</p>${button("開啟字典", { attrs: 'data-page="dictionary"' })}</div></details>`
+    : "";
+  return shell(`<div class="library-workspace">${savedAnalysis}${templateSection}${dictionarySection}</div>`, "library");
 }
 
 async function renderSchema() { const schema = await load("schema", "/api/v1/schema"); const lines = (schema.context || "").split("\n").filter(Boolean); return shell(`<section class="panel"><header class="panel-head"><div><span class="eyebrow">Schema-aware AI</span><h2>受控 D1 Schema Catalog</h2><p>這是 AI 產生查詢前取得的第一層結構描述；平台內部表已排除。</p></div>${has("refresh_schema") ? button("重新掃描 D1", { attrs: 'data-action="refresh-schema"', icon: "schema" }) : ""}</header><div class="schema-list">${lines.map((line) => { const [name, fields] = line.split("("); return `<article><b>${esc(name)}</b><span>${esc((fields || "").replace(/\)$/u, ""))}</span></article>`; }).join("") || '<p class="muted">尚未建立 Schema Catalog。</p>'}</div></section>`, "schema"); }
@@ -325,7 +505,7 @@ async function renderAdminSemanticPolicies() {
 async function renderAdminInvitations() { const data = await load("admin-invitations", "/api/v1/admin/invitations"); const rows = data.invitations.map((invite) => `<tr><td><b>${esc(invite.email)}</b><small>由 ${esc(invite.invitedByEmail || "Owner")} 建立</small></td><td>${status(invite.roleName)}</td><td>${invite.acceptedAt ? status("已接受", "safe") : invite.revokedAt ? status("已撤銷", "danger") : status("待接受", "warning")}</td><td>${fmtDate(invite.expiresAt)}</td><td>${!invite.acceptedAt && !invite.revokedAt ? `<button class="text-button danger" data-revoke-invite="${invite.id}">撤銷</button>` : "—"}</td></tr>`).join(""); return shell(`<section class="panel"><header class="panel-head"><div><span class="eyebrow">Secure onboarding</span><h2>邀請</h2><p>建立後會產生一次性完整邀請連結；請以安全管道傳遞給受邀者。</p></div>${button("建立邀請", { kind: "primary", icon: "plus", attrs: 'data-action="invite-user"' })}</header>${table(["電子郵件", "角色", "狀態", "到期時間", "操作"], rows)}</section>`, "admin-invitations"); }
 async function renderAdminAudit() { const data = await load("admin-audit", "/api/v1/admin/audit"); const rows = data.events.map((event) => `<tr><td>${fmtDate(event.createdAt)}</td><td><b>${esc(event.eventType)}</b></td><td>${esc(event.actorEmail || "系統")}</td><td>${esc(event.resourceType || "—")}</td><td><code>${esc(event.resourceId || "—")}</code></td></tr>`).join(""); return shell(`<section class="panel"><header class="panel-head"><div><span class="eyebrow">Immutable activity</span><h2>稽核紀錄</h2><p>查詢、角色、邀請、API Key 與治理操作皆會被記錄。</p></div></header>${table(["時間", "事件", "操作者", "資源", "ID"], rows)}</section>`, "admin-audit"); }
 async function renderAdminSystem() { const data = await load("admin-system", "/api/v1/admin/system"); return shell(`<section class="system-grid"><article class="panel"><span class="eyebrow">Runtime</span><h2>系統狀態</h2><dl class="definition-grid"><div><dt>部署環境</dt><dd>${esc(data.environment)}</dd></div><div><dt>應用資料庫</dt><dd>${esc(data.database.app)}</dd></div><div><dt>商業資料庫</dt><dd>${esc(data.database.data)}</dd></div><div><dt>Schema 表數</dt><dd>${data.database.schemaTables}</dd></div><div><dt>AI Gateway</dt><dd>${data.aiGatewayConfigured ? status("已設定", "safe") : status("待設定", "warning")}</dd></div></dl></article><article class="panel"><span class="eyebrow">Design boundary</span><h2>架構限制</h2><ul class="plain-list">${data.limitations.map((item) => `<li>${icon("check")}${esc(item)}</li>`).join("")}</ul></article></section>`, "admin-system"); }
-function renderProfile() { return shell(`<section class="profile-layout"><article class="profile-summary"><span class="avatar profile-avatar">${esc((state.user?.displayName || state.user?.email || "Q").slice(0, 1).toUpperCase())}</span><span class="eyebrow">Account</span><h2>${esc(state.user?.displayName || "QueryMind user")}</h2><p>${esc(state.user?.email)}</p>${status(state.user?.roleName || "member", "safe")}<p class="muted">每次查詢最多 ${Number(state.user?.permissions?.maxRowsPerQuery || 0).toLocaleString()} 列。</p></article><article class="panel"><span class="eyebrow">Security</span><h2>變更密碼</h2><p>密碼最少 12 個字元；變更後目前瀏覽器工作階段仍可使用。</p><form id="password-form" class="form-grid"><label>目前密碼<input name="currentPassword" type="password" autocomplete="current-password" minlength="12" required></label><label>新密碼<input name="newPassword" type="password" autocomplete="new-password" minlength="12" required></label><button class="button primary">${icon("check")}更新密碼</button></form><hr><button class="button danger-outline" data-action="logout">${icon("logout")}登出</button></article></section>`, "profile"); }
+function renderProfile() { return shell(`<section class="profile-layout"><article class="profile-summary"><span class="avatar profile-avatar">${esc((state.user?.displayName || state.user?.email || "Q").slice(0, 1).toUpperCase())}</span><span class="eyebrow">Account</span><h2>${esc(state.user?.displayName || "QueryMind user")}</h2><p>${esc(state.user?.email)}</p>${status(state.user?.roleName || "member", "safe")}<p class="muted">每次查詢最多 ${Number(state.user?.permissions?.maxRowsPerQuery || 0).toLocaleString()} 列。</p>${has("view_own_usage") ? button("查看我的用量", { attrs: 'data-page="usage"' }) : ""}</article><article class="panel"><span class="eyebrow">Security</span><h2>變更密碼</h2><p>密碼最少 12 個字元；變更後目前瀏覽器工作階段仍可使用。</p><form id="password-form" class="form-grid"><label>目前密碼<input name="currentPassword" type="password" autocomplete="current-password" minlength="12" required></label><label>新密碼<input name="newPassword" type="password" autocomplete="new-password" minlength="12" required></label><button class="button primary">${icon("check")}更新密碼</button></form><hr><button class="button danger-outline" data-action="logout">${icon("logout")}登出</button></article></section>`, "profile"); }
 
 const SEMANTIC_TYPES = ["TERM", "DIMENSION", "METRIC", "RELATIONSHIP"];
 const SEMANTIC_ASSET_STATUSES = ["ACTIVE", "DEPRECATED"];
@@ -439,6 +619,7 @@ function semanticQueryString() {
   for (const [key, value] of Object.entries({ search: filter.search, type: filter.type, assetStatus: filter.assetStatus, revisionStatus: filter.revisionStatus, domain: filter.domain })) if (value) query.set(key, value);
   return query.toString();
 }
+function semanticShellPage() { return state.navRoute === "needs-review" ? "needs-review" : "semantics"; }
 function semanticFilterSelect(name, values, selected, label) { return `<select name="${name}" aria-label="${esc(label)}">${semanticOption("", `所有${label}`, !selected)}${values.map((value) => semanticOption(value, value, value === selected)).join("")}</select>`; }
 function semanticWorkspaceTabs() { return `<nav class="semantic-tabs semantic-workspace-tabs" aria-label="Semantic Registry workspace"><button class="${state.semanticWorkspace === "assets" ? "active" : ""}" data-semantic-workspace="assets" aria-selected="${state.semanticWorkspace === "assets"}">Semantic Assets</button>${has("manage_semantic_drafts") ? `<button class="${state.semanticWorkspace === "suggestions" ? "active" : ""}" data-semantic-workspace="suggestions" aria-selected="${state.semanticWorkspace === "suggestions"}">AI Suggestions</button>` : ""}</nav>`; }
 function semanticRuntimeReadinessPanel(readiness) { const checks = readiness?.checks || {}; const statusText = value => value === "PASS" ? "Ready" : value === "NOT_READY" ? "Not ready" : value === "BLOCKED" ? "Blocked" : "Manual"; const item = (label, check) => `<div><span>${esc(label)}</span><b>${esc(statusText(check?.status))}</b><small>${esc(check?.code || "—")}</small></div>`; return `<section class="semantic-runtime-readiness"><header><div><span class="eyebrow">P2-H · Read-only activation gate</span><h3>Semantic Runtime Readiness</h3><p>This view assesses a future activation only. It cannot change configuration, semantic assets, or data access.</p></div><span class="governance-badge">${esc(readiness?.status || "NOT_READY")}</span></header><dl>${item("Runtime capability", { status: "PASS", code: readiness?.runtimeCapability || "AVAILABLE" })}${item("Activation flag", checks.featureFlag)}${item("Schema", checks.schemaSnapshot)}${item("Policy engine", checks.policyEngine)}${item("Evidence", checks.evidenceHook)}${item("Semantic content", checks.registry)}</dl>${readiness?.blockers?.length ? `<p class="semantic-runtime-blockers">Blockers: ${esc(readiness.blockers.join(" · "))}</p>` : ""}</section>`; }
@@ -449,11 +630,11 @@ async function renderSemanticRegistry() {
   const filter = state.semanticFilters;
   const create = has("manage_semantic_drafts") ? button("Create Semantic Asset", { kind: "primary", icon: "plus", attrs: 'data-action="create-semantic"' }) : "";
   const toolbar = `<form class="filter-bar semantic-filter-bar" data-semantic-filters><label>${icon("search")}<input name="search" aria-label="搜尋語意定義" value="${esc(filter.search)}" maxlength="120" placeholder="搜尋名稱、領域或標籤"></label>${semanticFilterSelect("type", SEMANTIC_TYPES, filter.type, "類型")}${semanticFilterSelect("assetStatus", SEMANTIC_ASSET_STATUSES, filter.assetStatus, "Asset 狀態")}${semanticFilterSelect("revisionStatus", SEMANTIC_REVISION_STATUSES, filter.revisionStatus, "Revision 狀態")}<input class="semantic-domain-filter" name="domain" aria-label="依領域篩選" value="${esc(filter.domain)}" maxlength="80" placeholder="領域"><button class="button secondary compact" type="submit">篩選</button></form>`;
-  if (!items.length) return shell(`<section class="panel panel-open semantic-registry"><header class="panel-head"><div><span class="eyebrow">Governed design-time metadata</span><h2>Semantic Registry</h2><p>集中維護指標、維度、詞彙與關聯的企業定義。此模組不會參與目前的查詢執行期。</p></div></header>${semanticWorkspaceTabs()}${semanticRuntimeReadinessPanel(readiness)}${toolbar}${empty("尚未建立語意定義", "Semantic Registry 用於定義企業一致的指標、維度、詞彙與關聯；建立草稿後仍須經過治理流程。", create)}</section>`, "semantics");
+  if (!items.length) return shell(`<section class="panel panel-open semantic-registry"><header class="panel-head"><div><span class="eyebrow">Governed design-time metadata</span><h2>Definitions</h2><p>集中維護指標、維度、詞彙與關聯的企業定義。此模組不會參與目前的查詢執行期。</p></div></header>${semanticWorkspaceTabs()}${semanticRuntimeReadinessPanel(readiness)}${toolbar}${empty(state.navRoute === "needs-review" ? "目前沒有待審查的定義" : "尚未建立語意定義", state.navRoute === "needs-review" ? "所有需要你審查的定義都已處理，或尚未有項目送交審查。" : "Definitions 用於維護企業一致的指標、維度、詞彙與關聯；建立草稿後仍須經過治理流程。", create)}</section>`, semanticShellPage());
   const rows = items.map((item) => `<tr><td><button class="semantic-name-button" data-open-semantic="${esc(item.assetId)}"><b>${esc(item.displayName)}</b><small>${esc(item.canonicalName)}</small></button></td><td>${semanticStatus(item.assetType)}</td><td>${esc(item.domain || "—")}</td><td><code>${esc(item.ownerUserId)}</code></td><td>${semanticStatus(item.assetStatus)}</td><td>${semanticStatus(item.latestRevision?.status)}</td><td>${item.latestRevision ? `v${esc(item.latestRevision.revisionNumber)}` : "—"}</td><td class="row-actions"><button class="text-button" data-open-semantic="${esc(item.assetId)}">檢視</button></td></tr>`).join("");
   const page = data.page || { page: 1, total: items.length, hasNext: false };
   const pagination = `<footer class="semantic-pagination"><small>第 ${Number(page.page).toLocaleString()} 頁 · 共 ${Number(page.total).toLocaleString()} 個 Assets</small><span><button class="button secondary compact" data-semantic-page="${Math.max(1, Number(page.page) - 1)}" ${Number(page.page) <= 1 ? "disabled" : ""}>上一頁</button><button class="button secondary compact" data-semantic-page="${Number(page.page) + 1}" ${page.hasNext ? "" : "disabled"}>下一頁</button></span></footer>`;
-  return shell(`<section class="panel panel-open semantic-registry"><header class="panel-head"><div><span class="eyebrow">Governed design-time metadata</span><h2>Semantic Registry</h2><p>在不改變 AI、SQL 或資料執行期的前提下，建立可追溯的企業語意定義。</p></div>${create}</header>${semanticWorkspaceTabs()}${semanticRuntimeReadinessPanel(readiness)}${toolbar}${table(["Name", "Type", "Domain", "Owner", "Asset", "Latest revision", "Version", ""], rows, "semantic-table")}${pagination}</section>`, "semantics");
+  return shell(`<section class="panel panel-open semantic-registry"><header class="panel-head"><div><span class="eyebrow">Governed design-time metadata</span><h2>Definitions</h2><p>在不改變 AI、SQL 或資料執行期的前提下，建立可追溯的企業語意定義。</p></div>${create}</header>${semanticWorkspaceTabs()}${semanticRuntimeReadinessPanel(readiness)}${toolbar}${table(["Name", "Type", "Domain", "Owner", "Asset", "Latest revision", "Version", ""], rows, "semantic-table")}${pagination}</section>`, semanticShellPage());
 }
 function semanticSuggestionQueryString() {
   const filter = state.semanticSuggestionFilters;
@@ -481,7 +662,7 @@ async function renderSemanticSuggestions() {
   const toolbar = `<form class="filter-bar semantic-filter-bar suggestion-filter-bar" data-suggestion-filters>${semanticFilterSelect("status", ["OPEN", "ACCEPTED", "DISMISSED"], filter.status, "狀態")}${semanticFilterSelect("type", SEMANTIC_TYPES, filter.type, "類型")}${semanticFilterSelect("stale", ["true", "false"], filter.stale, "Stale")}<button class="button secondary compact" type="submit">篩選</button></form>`;
   const generate = button("Generate Suggestions", { kind: "primary", icon: "plus", attrs: 'data-action="generate-semantic-suggestions"' });
   const cards = (data.items || []).map(suggestionCard).join("");
-  return shell(`<section class="panel panel-open semantic-registry semantic-suggestions"><header class="panel-head"><div><span class="eyebrow">Governed design-time AI</span><h2>AI Schema Suggestions</h2><p>只以目前可授權的結構化 Schema Metadata 產生草稿建議；不會查詢資料列、不會執行 SQL，也不會自動發佈語意定義。</p></div>${generate}</header>${semanticWorkspaceTabs()}${toolbar}${cards || empty("尚無 AI 語意建議", "選擇少量已授權資料表後，系統會產出需人工檢閱的草稿建議。", generate)}</section>`, "semantics");
+  return shell(`<section class="panel panel-open semantic-registry semantic-suggestions"><header class="panel-head"><div><span class="eyebrow">Governed design-time AI</span><h2>AI Schema Suggestions</h2><p>只以目前可授權的結構化 Schema Metadata 產生草稿建議；不會查詢資料列、不會執行 SQL，也不會自動發佈語意定義。</p></div>${generate}</header>${semanticWorkspaceTabs()}${toolbar}${cards || empty("尚無 AI 語意建議", "選擇少量已授權資料表後，系統會產出需人工檢閱的草稿建議。", generate)}</section>`, semanticShellPage());
 }
 function semanticTab(id, label, active) { return `<button class="${active ? "active" : ""}" data-semantic-tab="${id}" aria-selected="${active}">${esc(label)}</button>`; }
 function semanticApprovalSummary(readiness, history, latest) {
@@ -526,7 +707,7 @@ async function renderSemanticDetail(assetId) {
       panel += `<div class="semantic-actions">${runtimeAction}${history.publication.publication_mode === "EMERGENCY" && history.publication.post_review_status === "PENDING" ? `<button class="button secondary" data-post-review-semantic="${esc(assetId)}" data-revision-id="${esc(latest.revisionId)}">Resolve emergency post-review</button>` : ""}</div>`;
     }
   }
-  return shell(`<section class="semantic-detail"><header class="semantic-detail-head"><div><button class="text-button semantic-back" data-semantic-back>${icon("chevron")}Back to Registry</button><span class="eyebrow">Semantic Asset</span><h2>${esc(detail.asset.displayName)}</h2><p>${esc(detail.asset.domain || "Unassigned domain")} · ${semanticStatus(detail.asset.assetType)} ${semanticStatus(detail.asset.assetStatus)}</p></div><div class="semantic-actions">${actions}</div></header><nav class="semantic-tabs" aria-label="Semantic asset sections">${tabs.map((tab) => semanticTab(tab, tab === "overview" ? "Overview" : tab === "definition" ? "Definition" : tab === "sources" ? "Sources" : tab === "aliases" ? "Aliases" : tab === "history" ? "Revision History" : tab === "review" ? "Review" : "Approval", state.semanticDetailTab === tab)).join("")}</nav>${panel}</section>`, "semantics");
+  return shell(`<section class="semantic-detail"><header class="semantic-detail-head"><div><button class="text-button semantic-back" data-semantic-back>${icon("chevron")}Back to Definitions</button><span class="eyebrow">Semantic Asset</span><h2>${esc(detail.asset.displayName)}</h2><p>${esc(detail.asset.domain || "Unassigned domain")} · ${semanticStatus(detail.asset.assetType)} ${semanticStatus(detail.asset.assetStatus)}</p></div><div class="semantic-actions">${actions}</div></header><nav class="semantic-tabs" aria-label="Semantic asset sections">${tabs.map((tab) => semanticTab(tab, tab === "overview" ? "Overview" : tab === "definition" ? "Definition" : tab === "sources" ? "Sources" : tab === "aliases" ? "Aliases" : tab === "history" ? "Revision History" : tab === "review" ? "Review" : "Approval", state.semanticDetailTab === tab)).join("")}</nav>${panel}</section>`, semanticShellPage());
 }
 async function renderSemantics() { return state.semanticAssetId ? renderSemanticDetail(state.semanticAssetId) : state.semanticWorkspace === "suggestions" && has("manage_semantic_drafts") ? renderSemanticSuggestions() : renderSemanticRegistry(); }
 
@@ -817,26 +998,9 @@ async function dismissSemanticSuggestion(suggestionId) {
   } catch (error) { toast(semanticError(error), "error"); }
 }
 
-function installSemanticNavigation() {
-  if (!pageAllowed("semantics") || root.querySelector('[data-page="semantics"]')) return;
-  const navigation = root.querySelector(".sidebar nav");
-  if (!navigation) return;
-  const section = document.createElement("div");
-  section.className = "nav-section";
-  section.textContent = "語意治理";
-  const item = document.createElement("button");
-  item.className = `nav-item ${state.page === "semantics" ? "active" : ""}`;
-  item.dataset.page = "semantics";
-  item.dataset.semanticNav = "true";
-  item.setAttribute("aria-current", state.page === "semantics" ? "page" : "false");
-  item.innerHTML = `${icon("layers")}<span>Semantic Registry</span>`;
-  item.addEventListener("click", () => { state.semanticAssetId = null; state.semanticDetailTab = "overview"; go("semantics"); });
-  navigation.append(section, item);
-}
-
-const VIEWS = { dashboard: renderDashboard, chat: renderChat, schema: renderSchema, dictionary: renderDictionary, templates: renderTemplates, insights: renderInsights, usage: renderUsage, source: renderSource, semantics: renderSemantics, "admin-overview": renderAdminOverview, "admin-users": renderAdminUsers, "admin-roles": renderAdminRoles, "admin-semantic-authorities": renderAdminSemanticAuthorities, "admin-semantic-policies": renderAdminSemanticPolicies, "admin-invitations": renderAdminInvitations, "admin-audit": renderAdminAudit, "admin-system": renderAdminSystem, profile: async () => renderProfile() };
-async function render() { const current = ++state.renderId; root.innerHTML = '<div class="loading"><span></span>正在載入 QueryMind…</div>'; try { if (!pageAllowed(state.page)) state.page = "dashboard"; const markup = await (VIEWS[state.page] || VIEWS.dashboard)(); if (current !== state.renderId) return; root.innerHTML = markup; bindShell(); bindPage(); } catch (error) { if (current !== state.renderId || error.authExpired) return; root.innerHTML = shell(empty("載入資料時發生問題", error.message, button("重新嘗試", { kind: "primary", attrs: 'data-action="retry"' }))); bindShell(); root.querySelector('[data-action="retry"]')?.addEventListener("click", () => { state.cache.clear(); void render(); }); } }
-function bindShell() { installSemanticNavigation(); root.querySelectorAll("[data-page]:not([data-semantic-nav])").forEach((element) => element.addEventListener("click", () => go(element.dataset.page))); root.querySelectorAll('[data-action="open-sidebar"]').forEach((element) => element.addEventListener("click", () => { state.sidebarOpen = true; void render(); })); root.querySelectorAll('[data-action="close-sidebar"]').forEach((element) => element.addEventListener("click", () => { state.sidebarOpen = false; void render(); })); }
+const VIEWS = { dashboard: renderDashboard, chat: renderChat, history: renderHistory, library: renderLibrary, schema: renderSchema, dictionary: renderDictionary, templates: renderTemplates, insights: renderInsights, usage: renderUsage, source: renderSource, semantics: renderSemantics, "admin-overview": renderAdminOverview, "admin-users": renderAdminUsers, "admin-roles": renderAdminRoles, "admin-semantic-authorities": renderAdminSemanticAuthorities, "admin-semantic-policies": renderAdminSemanticPolicies, "admin-invitations": renderAdminInvitations, "admin-audit": renderAdminAudit, "admin-system": renderAdminSystem, profile: async () => renderProfile() };
+async function render() { const current = ++state.renderId; root.innerHTML = '<div class="loading"><span></span>正在載入 QueryMind…</div>'; try { if (!pageAllowed(state.navRoute)) { state.page = defaultPage(); prepareRoute(state.page); history.replaceState({}, "", `${location.pathname}#/${state.navRoute}`); } const markup = await (VIEWS[state.page] || VIEWS.chat)(); if (current !== state.renderId) return; root.innerHTML = markup; bindShell(); bindPage(); } catch (error) { if (current !== state.renderId || error.authExpired) return; root.innerHTML = shell(empty("載入資料時發生問題", error.message, button("重新嘗試", { kind: "primary", attrs: 'data-action="retry"' }))); bindShell(); root.querySelector('[data-action="retry"]')?.addEventListener("click", () => { state.cache.clear(); void render(); }); } }
+function bindShell() { root.querySelectorAll("[data-page]").forEach((element) => element.addEventListener("click", () => go(element.dataset.page, { route: element.dataset.route || element.dataset.page }))); root.querySelectorAll('[data-action="open-sidebar"]').forEach((element) => element.addEventListener("click", () => { state.sidebarOpen = true; void render(); })); root.querySelectorAll('[data-action="close-sidebar"]').forEach((element) => element.addEventListener("click", () => { state.sidebarOpen = false; void render(); })); }
 function bindSemanticPage() {
   root.querySelectorAll("[data-semantic-workspace]").forEach((button) => button.addEventListener("click", () => { state.semanticWorkspace = button.dataset.semanticWorkspace; state.semanticAssetId = null; void render(); }));
   root.querySelector("[data-semantic-filters]")?.addEventListener("submit", (event) => {
@@ -875,18 +1039,19 @@ function bindPage() { bindSemanticPage();
   // root delegation above and keep the capture-only UX reliable after a rerender.
   root.querySelectorAll("[data-feedback-submit]").forEach((button) => button.addEventListener("click", (event) => { event.preventDefault(); void submitFeedback(button.closest("[data-feedback-box]")); }));
   root.querySelectorAll("[data-prompt]").forEach((button) => button.addEventListener("click", () => go("chat", { pendingPrompt: button.dataset.prompt, resetSession: true })));
-  root.querySelectorAll("[data-session]").forEach((button) => button.addEventListener("click", () => { state.activeSession = button.dataset.session; state.messages = []; state.result = null; void render(); }));
+  root.querySelectorAll("[data-session]").forEach((button) => button.addEventListener("click", () => { state.activeSession = button.dataset.session; state.messages = []; state.result = null; if (state.page === "history") go("chat"); else void render(); }));
   root.querySelectorAll("[data-session-action]").forEach((button) => button.addEventListener("click", (event) => { event.stopPropagation(); void sessionAction(button.dataset.sessionAction, button.dataset.sessionId, button.dataset.sessionValue); }));
-  root.querySelector('[data-action="create-session"]')?.addEventListener("click", () => { state.activeSession = null; state.messages = []; state.result = null; state.archiveMode = false; void render(); });
+  root.querySelector('[data-action="create-session"]')?.addEventListener("click", () => { state.activeSession = null; state.messages = []; state.result = null; state.archiveMode = false; if (state.page === "history") go("chat", { resetSession: true }); else void render(); });
   root.querySelector('[data-action="toggle-archive"]')?.addEventListener("click", () => { state.archiveMode = !state.archiveMode; state.activeSession = null; state.messages = []; state.result = null; void render(); });
   root.querySelector("#chat-form")?.addEventListener("submit", sendChat); const prompt = root.querySelector("#chat-prompt"); if (prompt && state.pendingPrompt) { prompt.value = state.pendingPrompt; state.pendingPrompt = ""; prompt.focus(); }
   root.querySelectorAll("[data-result-tab]").forEach((button) => button.addEventListener("click", () => { const [key, tab] = button.dataset.resultTab.split(":"); state.resultTabs.set(key, tab); void render(); }));
   root.querySelectorAll("[data-export]").forEach((button) => button.addEventListener("click", () => void exportCsv(decodeURIComponent(button.dataset.export))));
-  root.querySelectorAll("[data-copy-sql]").forEach((button) => button.addEventListener("click", () => void copyText(decodeURIComponent(button.dataset.copySql), "SQL 已複製")));
+   root.querySelectorAll("[data-copy-sql]").forEach((button) => button.addEventListener("click", () => void copyText(decodeURIComponent(button.dataset.copySql), "SQL 已複製")));
+   root.querySelectorAll("[data-save-query-run]").forEach((button) => button.addEventListener("click", () => saveAnalysisDialog(button.dataset.saveQueryRun, button)));
   root.querySelector('[data-action="refresh-schema"]')?.addEventListener("click", async () => { try { await api("/api/v1/schema/refresh", { method: "POST" }); invalidate("schema", "source", "admin-system"); toast("Schema 已重新掃描"); void render(); } catch (error) { toast(error.message, "error"); } });
   root.querySelectorAll("[data-use-template]").forEach((button) => button.addEventListener("click", async () => { const data = await load("templates", "/api/v1/templates"); const template = data.templates.find((item) => item.id === button.dataset.useTemplate); go("chat", { pendingPrompt: template?.prompt || "", resetSession: true }); }));
   root.querySelector('[data-action="add-template"]')?.addEventListener("click", () => templateForm()); root.querySelectorAll("[data-edit-template]").forEach((button) => button.addEventListener("click", async () => { const data = await load("templates", "/api/v1/templates"); templateForm(data.templates.find((item) => item.id === button.dataset.editTemplate)); })); root.querySelectorAll("[data-delete-template]").forEach((button) => button.addEventListener("click", () => void removeTemplate(button.dataset.deleteTemplate)));
-  root.querySelector('[data-action="add-insight"]')?.addEventListener("click", () => insightForm()); root.querySelectorAll("[data-edit-insight]").forEach((button) => button.addEventListener("click", async () => { const data = await load("insights", "/api/v1/insights"); insightForm(data.insights.find((item) => item.id === button.dataset.editInsight)); })); root.querySelectorAll("[data-run-insight]").forEach((button) => button.addEventListener("click", () => void runInsight(button.dataset.runInsight))); root.querySelectorAll("[data-favorite-insight]").forEach((button) => button.addEventListener("click", () => void toggleInsightFavorite(button.dataset.favoriteInsight))); root.querySelectorAll("[data-delete-insight]").forEach((button) => button.addEventListener("click", () => void removeInsight(button.dataset.deleteInsight)));
+   root.querySelector('[data-action="add-insight"]')?.addEventListener("click", () => insightForm()); root.querySelectorAll("[data-edit-insight]").forEach((button) => button.addEventListener("click", async () => { const data = await load("insights", "/api/v1/insights"); insightForm(data.insights.find((item) => item.id === button.dataset.editInsight)); })); root.querySelectorAll("[data-run-insight]").forEach((button) => button.addEventListener("click", () => void runInsight(button.dataset.runInsight))); root.querySelectorAll("[data-rename-insight]").forEach((button) => button.addEventListener("click", () => void renameInsight(button.dataset.renameInsight))); root.querySelectorAll("[data-favorite-insight]").forEach((button) => button.addEventListener("click", () => void toggleInsightFavorite(button.dataset.favoriteInsight))); root.querySelectorAll("[data-delete-insight]").forEach((button) => button.addEventListener("click", () => void removeInsight(button.dataset.deleteInsight)));
   root.querySelector('[data-action="add-dictionary"]')?.addEventListener("click", () => dictionaryForm()); root.querySelectorAll("[data-edit-dictionary]").forEach((button) => button.addEventListener("click", () => dictionaryForm(button.dataset.editDictionary))); root.querySelectorAll("[data-delete-dictionary]").forEach((button) => button.addEventListener("click", () => void removeDictionary(button.dataset.deleteDictionary)));
    root.querySelector('[data-action="invite-user"]')?.addEventListener("click", inviteForm); root.querySelectorAll("[data-revoke-invite]").forEach((button) => button.addEventListener("click", () => void revokeInvite(button.dataset.revokeInvite)));
    root.querySelector('[data-action="create-semantic-authority"]')?.addEventListener("click", () => void semanticAuthorityForm()); root.querySelectorAll("[data-replace-semantic-authority]").forEach((button) => button.addEventListener("click", () => void replaceSemanticAuthorityForm(button.dataset.replaceSemanticAuthority))); root.querySelectorAll("[data-toggle-semantic-authority]").forEach((button) => button.addEventListener("click", () => void toggleSemanticAuthority(button.dataset.toggleSemanticAuthority, button.dataset.active === "true")));
@@ -903,8 +1068,106 @@ async function copyText(value, message) { try { await navigator.clipboard.writeT
 function modal(content) { const dialog = document.createElement("dialog"); dialog.className = "modal"; dialog.innerHTML = `<button class="modal-close" aria-label="關閉">${icon("close")}</button>${content}`; document.body.append(dialog); dialog.showModal(); dialog.querySelector(".modal-close").onclick = () => dialog.close(); dialog.addEventListener("close", () => { const refreshPage = dialog.dataset.refreshPageOnClose === "true"; dialog.remove(); if (refreshPage) void render(); }); return dialog; }
 function templateForm(item = null) { const existing = item || {}; const dialog = modal(`<form class="modal-form"><span class="eyebrow">Reusable prompt</span><h2>${item ? "編輯查詢範本" : "新增查詢範本"}</h2><label>標題<input name="title" required maxlength="120" value="${esc(existing.title || "")}"></label><label>分類<input name="category" maxlength="80" value="${esc(existing.category || "")}"></label><label>說明<textarea name="description" maxlength="500">${esc(existing.description || "")}</textarea></label><label>提問內容<textarea name="prompt" required maxlength="4000">${esc(existing.prompt || "")}</textarea></label><label class="check"><input type="checkbox" name="isPinned" ${existing.is_pinned || existing.isPinned ? "checked" : ""}> 置頂顯示</label><label class="check"><input type="checkbox" name="isShared" ${item ? (existing.is_shared || existing.isShared ? "checked" : "") : "checked"}> 分享給工作區</label><button class="button primary">${icon("check")}儲存範本</button></form>`); dialog.querySelector("form").onsubmit = async (event) => { event.preventDefault(); const data = new FormData(event.currentTarget); const body = { ...Object.fromEntries(data), isPinned: data.has("isPinned"), isShared: data.has("isShared") }; try { await api(item ? `/api/v1/templates/${item.id}` : "/api/v1/templates", { method: item ? "PATCH" : "POST", body: JSON.stringify(body) }); invalidate("templates"); dialog.close(); toast(item ? "範本已更新" : "範本已建立"); void render(); } catch (error) { toast(error.message, "error"); } }; }
 async function removeTemplate(id) { if (!confirm("確定刪除這份範本嗎？")) return; try { await api(`/api/v1/templates/${id}`, { method: "DELETE" }); invalidate("templates"); toast("範本已刪除"); void render(); } catch (error) { toast(error.message, "error"); } }
-function insightForm(item = null) { const existing = item || {}; const dialog = modal(`<form class="modal-form"><span class="eyebrow">Saved analysis</span><h2>${item ? "編輯洞察" : "新增洞察"}</h2><label>標題<input name="title" required maxlength="120" value="${esc(existing.title || "")}"></label><label>說明<textarea name="description" maxlength="500">${esc(existing.description || "")}</textarea></label><label>自然語言問題<textarea name="prompt" maxlength="4000">${esc(existing.prompt || "")}</textarea></label><label>已驗證 SQL（可選）<textarea name="sql" maxlength="10000" class="mono">${esc(existing.sql || "")}</textarea></label><label>視覺化<select name="chartType">${["table", "bar", "line", "area"].map((type) => `<option value="${type}" ${String(existing.chartType || "table") === type ? "selected" : ""}>${type}</option>`).join("")}</select></label><label class="check"><input type="checkbox" name="isFavorite" ${existing.isFavorite ? "checked" : ""}> 加入收藏</label><button class="button primary">${icon("check")}儲存洞察</button></form>`); dialog.querySelector("form").onsubmit = async (event) => { event.preventDefault(); const data = new FormData(event.currentTarget); const body = { ...Object.fromEntries(data), isFavorite: data.has("isFavorite") }; try { await api(item ? `/api/v1/insights/${item.id}` : "/api/v1/insights", { method: item ? "PATCH" : "POST", body: JSON.stringify(body) }); invalidate("insights", "dashboard"); dialog.close(); toast(item ? "洞察已更新" : "洞察已儲存"); void render(); } catch (error) { toast(error.message, "error"); } }; }
-async function runInsight(id) { try { const data = await load("insights", "/api/v1/insights"); const insight = data.insights.find((item) => item.id === id); if (!insight) throw new Error("找不到洞察"); if (!insight.sql) { go("chat", { pendingPrompt: insight.prompt || insight.title, resetSession: true }); return; } const sessionId = await ensureSession(insight.title); state.messages = [{ id: `insight-${id}`, role: "user", content: `檢視洞察：${insight.title}`, metadata: {}, created_at: new Date().toISOString() }]; state.sending = true; go("chat"); const result = await api("/api/v1/query", { method: "POST", body: JSON.stringify({ sql: insight.sql, sessionId, prompt: insight.prompt || insight.title }) }); state.result = { id: `insight-result-${id}`, answer: `已重新執行「${insight.title}」。`, sql: insight.sql, ...result }; invalidate("dashboard", "usage"); } catch (error) { toast(error.message, "error"); } finally { state.sending = false; void render(); } }
+function saveAnalysisDialog(queryRunId, trigger) {
+  if (!queryRunId || state.savingAnalysisRuns.has(queryRunId) || state.savedAnalysisRuns.has(queryRunId)) return;
+  state.savingAnalysisRuns.add(queryRunId);
+  trigger.disabled = true;
+  const prompt = String(trigger.dataset.savePrompt || "").trim();
+  const defaultTitle = (prompt || "資料分析").replace(/\s+/gu, " ").slice(0, 120);
+  const dialog = modal(`<form class="modal-form save-analysis-form" aria-labelledby="save-analysis-title"><span class="eyebrow">Personal Library</span><h2 id="save-analysis-title">儲存這次分析</h2><p>只保存問題與來源脈絡，不保存結果列或可直接執行的 SQL。未來重跑會重新檢查你的目前權限。</p><label for="save-analysis-title-input">標題<input id="save-analysis-title-input" name="title" required maxlength="120" autofocus value="${esc(defaultTitle)}"></label><label for="save-analysis-note">備註（選填）<textarea id="save-analysis-note" name="description" maxlength="500" placeholder="補充這份分析的用途"></textarea></label><p class="save-analysis-error" role="alert" aria-live="polite" hidden></p><div class="save-analysis-dialog-actions"><button class="button secondary compact" type="button" data-cancel-save>取消</button><button class="button primary compact" type="submit">儲存至 Library</button></div></form>`);
+  const form = dialog.querySelector("form");
+  const submit = form.querySelector('[type="submit"]');
+  const errorBox = form.querySelector(".save-analysis-error");
+  let saved = false;
+  dialog.querySelector("[data-cancel-save]").addEventListener("click", () => dialog.close());
+  dialog.addEventListener("close", () => {
+    state.savingAnalysisRuns.delete(queryRunId);
+    if (!saved && trigger.isConnected) trigger.disabled = false;
+    if (!saved && trigger.isConnected) trigger.focus();
+  });
+  form.onsubmit = async (event) => {
+    event.preventDefault();
+    if (submit.disabled) return;
+    const data = new FormData(form);
+    submit.disabled = true;
+    submit.textContent = "儲存中…";
+    errorBox.hidden = true;
+    try {
+      const result = await api("/api/v1/insights", { method: "POST", body: JSON.stringify({ queryRunId, title: data.get("title"), description: data.get("description") }) });
+      saved = true;
+      state.savedAnalysisRuns.add(queryRunId);
+      invalidate("insights", "dashboard");
+      dialog.close();
+      toast(result.alreadySaved ? "此分析已儲存於 Library" : "已儲存至 Library");
+      await render();
+      root.querySelector(`[data-saved-analysis-run="${CSS.escape(queryRunId)}"]`)?.focus();
+    } catch (error) {
+      errorBox.textContent = error.code === "QUERY_RUN_NOT_FOUND" ? "這筆成功分析已無法驗證，請重新執行後再保存。" : error.code === "RBAC_FORBIDDEN" ? "目前帳號沒有管理個人洞察的權限。" : "儲存失敗，請稍後重試。";
+      errorBox.hidden = false;
+      submit.disabled = false;
+      submit.textContent = "重試儲存";
+    }
+  };
+}
+
+async function renameInsight(id) {
+  try {
+    const data = await load("insights", "/api/v1/insights");
+    const item = data.insights.find((entry) => entry.id === id);
+    if (!item) throw new Error("找不到已儲存的分析");
+    const dialog = modal(`<form class="modal-form"><span class="eyebrow">Personal Library</span><h2>重新命名分析</h2><label for="rename-analysis-title">標題<input id="rename-analysis-title" name="title" required maxlength="120" value="${esc(item.title)}"></label><p class="save-analysis-error" role="alert" hidden></p><div class="save-analysis-dialog-actions"><button class="button secondary compact" type="button" data-cancel-save>取消</button><button class="button primary compact" type="submit">儲存名稱</button></div></form>`);
+    const form = dialog.querySelector("form");
+    const submit = form.querySelector('[type="submit"]');
+    const errorBox = form.querySelector('[role="alert"]');
+    dialog.querySelector("[data-cancel-save]").addEventListener("click", () => dialog.close());
+    form.onsubmit = async (event) => {
+      event.preventDefault();
+      if (submit.disabled) return;
+      submit.disabled = true;
+      try {
+        await api(`/api/v1/insights/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify({ title: new FormData(form).get("title") }) });
+        invalidate("insights"); dialog.close(); toast("分析名稱已更新"); void render();
+      } catch {
+        errorBox.textContent = "更新失敗，請稍後重試。"; errorBox.hidden = false; submit.disabled = false;
+      }
+    };
+  } catch (error) { toast(error.message || "無法開啟重新命名", "error"); }
+}
+
+async function runIntentInsight(insight) {
+  const prompt = String(insight.prompt || insight.title || "").trim();
+  if (!prompt || state.sending) return;
+  state.activeSession = null; state.messages = []; state.result = null; state.archiveMode = false;
+  go("chat", { resetSession: true });
+  try {
+    const sessionId = await ensureSession(insight.title || prompt);
+    const optimistic = { id: `pending-${Date.now()}`, role: "user", content: prompt, metadata: {}, created_at: new Date().toISOString() };
+    state.messages = [optimistic]; state.sending = true; void render();
+    await api("/api/v1/chat", { method: "POST", body: JSON.stringify({ sessionId, prompt }) });
+    invalidate("dashboard", "usage", "insights");
+    state.messages = [];
+    await Promise.all([loadMessages(sessionId), loadSessions()]);
+  } catch (error) {
+    state.messages = state.messages.filter((message) => !String(message.id).startsWith("pending-"));
+    toast(error.message || "重新執行失敗，請稍後重試。", "error");
+  } finally { state.sending = false; void render(); }
+}
+
+async function runInsight(id) {
+  try {
+    const data = await load("insights", "/api/v1/insights");
+    const insight = data.insights.find((item) => item.id === id);
+    if (!insight) throw new Error("找不到洞察");
+    if (!insight.sql) { await runIntentInsight(insight); return; }
+    const sessionId = await ensureSession(insight.title);
+    state.messages = [{ id: `insight-${id}`, role: "user", content: `重新執行：${insight.prompt || insight.title}`, metadata: {}, created_at: new Date().toISOString() }];
+    state.sending = true; state.result = null; go("chat");
+    const result = await api("/api/v1/query", { method: "POST", body: JSON.stringify({ sql: insight.sql, sessionId, prompt: insight.prompt || insight.title }) });
+    state.result = { answer: `已在目前權限下重新執行「${insight.title}」。`, prompt: insight.prompt || insight.title, ...result };
+    invalidate("dashboard", "usage");
+  } catch (error) { toast(error.message || "重新執行失敗，請稍後重試。", "error"); }
+  finally { state.sending = false; void render(); }
+}
 async function toggleInsightFavorite(id) { try { const data = await load("insights", "/api/v1/insights"); const insight = data.insights.find((item) => item.id === id); await api(`/api/v1/insights/${id}`, { method: "PATCH", body: JSON.stringify({ isFavorite: !insight.isFavorite }) }); invalidate("insights"); toast(insight.isFavorite ? "已取消收藏" : "已加入收藏"); void render(); } catch (error) { toast(error.message, "error"); } }
 async function removeInsight(id) { if (!confirm("確定刪除此洞察嗎？")) return; try { await api(`/api/v1/insights/${id}`, { method: "DELETE" }); invalidate("insights", "dashboard"); toast("洞察已刪除"); void render(); } catch (error) { toast(error.message, "error"); } }
 function dictionaryForm(id = null) { const launch = async () => { const data = await load("dictionary", "/api/v1/dictionary"); const existing = data.entries.find((entry) => entry.id === id) || {}; const dialog = modal(`<form class="modal-form"><span class="eyebrow">Business glossary</span><h2>${id ? "編輯詞彙" : "新增詞彙"}</h2><label>詞彙<input name="term" required maxlength="120" value="${esc(existing.term || "")}"></label><label>定義<textarea name="definition" required maxlength="2000">${esc(existing.definition || "")}</textarea></label><label>分類<input name="category" maxlength="80" value="${esc(existing.category || "business")}"></label><label>範例<textarea name="examples" maxlength="1000">${esc(existing.examples || "")}</textarea></label><button class="button primary">${icon("check")}儲存詞彙</button></form>`); dialog.querySelector("form").onsubmit = async (event) => { event.preventDefault(); try { await api(id ? `/api/v1/dictionary/${id}` : "/api/v1/dictionary", { method: id ? "PUT" : "POST", body: JSON.stringify(Object.fromEntries(new FormData(event.currentTarget))) }); invalidate("dictionary"); dialog.close(); toast("字典已更新，下一次提問會使用新定義"); void render(); } catch (error) { toast(error.message, "error"); } }; }; void launch(); }
@@ -1054,11 +1317,11 @@ async function logout() { try { await api("/api/v1/auth/logout", { method: "POST
 function authShell(content) { root.innerHTML = `<main class="auth-shell"><section class="auth-aside"><div class="brand"><span class="brand-mark">Q</span><span>QueryMind</span></div><div><span class="eyebrow">Secure analytics workspace</span><h1>讓資料直接回答問題。</h1><p>以自然語言探索資料，同時保留唯讀 SQL、欄位遮罩、D1 Schema Catalog 與角色化產品權限。</p></div><ul><li>${icon("shield")}受控 D1 資料來源</li><li>${icon("chat")}AI Gateway BYOK 架構</li><li>${icon("users")}角色導向產品功能</li></ul></section><section class="auth-content">${content}</section></main>`; }
 function showAuth() { authShell(`<form id="login-form" class="auth-card"><span class="eyebrow">Welcome back</span><h2>登入 QueryMind</h2><p>使用你的工作區帳戶繼續。</p><label>電子郵件<input name="email" type="email" required autocomplete="email"></label><label>密碼<input name="password" type="password" required minlength="12" autocomplete="current-password"></label><button class="button primary">${icon("chat")}登入工作區</button><p class="auth-note">需要加入工作區嗎？請向 Owner 索取一次性邀請連結。</p></form>`); root.querySelector("#login-form").onsubmit = login; }
 function showBootstrap() { authShell(`<form id="bootstrap-form" class="auth-card"><span class="eyebrow">First-time setup</span><h2>建立 QueryMind Owner</h2><p>此工作區尚未建立帳戶。輸入部署時設定的 Bootstrap Token，建立唯一的初始 Owner。</p><label>Owner 電子郵件<input name="email" type="email" required autocomplete="email"></label><label>密碼<input name="password" type="password" required minlength="12" autocomplete="new-password"></label><label>確認密碼<input name="confirmPassword" type="password" required minlength="12" autocomplete="new-password"></label><label>Bootstrap Token<input name="bootstrapToken" type="password" required autocomplete="off"></label><button class="button primary">${icon("shield")}建立安全工作區</button><p class="auth-note">建立完成後，Bootstrap Token 將無法再建立第二位 Owner。</p></form>`); root.querySelector("#bootstrap-form").onsubmit = bootstrapWorkspace; }
-async function bootstrapWorkspace(event) { event.preventDefault(); const form = new FormData(event.currentTarget); if (form.get("password") !== form.get("confirmPassword")) { toast("兩次輸入的密碼不一致", "error"); return; } const button = event.currentTarget.querySelector("button"); button.disabled = true; try { const data = await api("/api/v1/auth/bootstrap", { method: "POST", body: JSON.stringify({ email: form.get("email"), password: form.get("password"), bootstrapToken: form.get("bootstrapToken") }) }); state.user = data.user; history.replaceState({}, "", "/#/dashboard"); state.page = "dashboard"; await render(); } catch (error) { toast(error.message, "error"); button.disabled = false; } }
+async function bootstrapWorkspace(event) { event.preventDefault(); const form = new FormData(event.currentTarget); if (form.get("password") !== form.get("confirmPassword")) { toast("兩次輸入的密碼不一致", "error"); return; } const button = event.currentTarget.querySelector("button"); button.disabled = true; try { const data = await api("/api/v1/auth/bootstrap", { method: "POST", body: JSON.stringify({ email: form.get("email"), password: form.get("password"), bootstrapToken: form.get("bootstrapToken") }) }); state.user = data.user; history.replaceState({}, "", "/#/chat"); state.page = "chat"; prepareRoute("chat"); await render(); } catch (error) { toast(error.message, "error"); button.disabled = false; } }
 async function login(event) { event.preventDefault(); const button = event.currentTarget.querySelector("button"); button.disabled = true; try { const data = await api("/api/v1/auth/login", { method: "POST", body: JSON.stringify(Object.fromEntries(new FormData(event.currentTarget))) }); state.user = data.user; state.page = pageFromLocation(); void render(); } catch (error) { toast(error.message, "error"); button.disabled = false; } }
 function invitationTokenFromLocation() { const fragment = location.hash.startsWith("#") ? location.hash.slice(1) : location.hash; return new URLSearchParams(fragment).get("token") || ""; }
 function showInvitation(token = invitationTokenFromLocation() || state.inviteToken) { state.inviteToken = token || ""; authShell(`<section class="auth-card invite-card"><span class="eyebrow">Secure onboarding</span><h2>加入 QueryMind</h2><p>確認邀請後，設定你的帳戶密碼即可進入工作區。</p><form id="invite-token-form"><label>邀請 Token 或連結<input name="token" value="${esc(state.inviteToken)}" placeholder="貼上 qmi_… Token 或完整連結" required></label><button class="button secondary">確認邀請</button></form><div id="invite-preview" class="invite-preview"></div></section>`); root.querySelector("#invite-token-form").onsubmit = async (event) => { event.preventDefault(); const value = new FormData(event.currentTarget).get("token").toString().trim(); try { const parsed = new URL(value, location.origin); const fragment = parsed.hash.startsWith("#") ? parsed.hash.slice(1) : parsed.hash; state.inviteToken = new URLSearchParams(fragment).get("token") || value; } catch { state.inviteToken = value; } await loadInvitationPreview(); }; if (state.inviteToken) void loadInvitationPreview(); }
-async function loadInvitationPreview() { const target = root.querySelector("#invite-preview"); target.innerHTML = '<div class="loading-inline">正在確認邀請…</div>'; try { const data = await api("/api/v1/auth/invitation", { method: "POST", body: JSON.stringify({ token: state.inviteToken }) }); const invite = data.invitation; target.innerHTML = `<div class="invite-summary"><span>${icon("check")}</span><div><b>${esc(invite.email)}</b><small>角色：${esc(invite.roleName)} · 到期：${fmtDate(invite.expiresAt)}</small></div></div><form id="accept-invite-form" class="form-grid"><label>顯示名稱<input name="displayName" maxlength="100" placeholder="你的名字或團隊暱稱"></label><label>設定密碼<input name="password" type="password" minlength="12" autocomplete="new-password" required></label><label>確認密碼<input name="confirmPassword" type="password" minlength="12" autocomplete="new-password" required></label><button class="button primary">${icon("check")}建立帳號並進入工作區</button></form>`; root.querySelector("#accept-invite-form").onsubmit = async (event) => { event.preventDefault(); const form = new FormData(event.currentTarget); if (form.get("password") !== form.get("confirmPassword")) { toast("兩次輸入的密碼不一致", "error"); return; } try { await api("/api/v1/auth/accept-invitation", { method: "POST", body: JSON.stringify({ token: state.inviteToken, email: invite.email, displayName: form.get("displayName"), password: form.get("password") }) }); const loginData = await api("/api/v1/auth/login", { method: "POST", body: JSON.stringify({ email: invite.email, password: form.get("password") }) }); state.user = loginData.user; history.replaceState({}, "", "/"); location.hash = "#/dashboard"; } catch (error) { toast(error.message, "error"); } }; } catch (error) { target.innerHTML = `<div class="inline-error">${icon("warning")}${esc(error.message || "邀請不存在、已過期或已使用。")}<br><small>請向 Owner 取得新的邀請連結。</small></div>`; } }
+async function loadInvitationPreview() { const target = root.querySelector("#invite-preview"); target.innerHTML = '<div class="loading-inline">正在確認邀請…</div>'; try { const data = await api("/api/v1/auth/invitation", { method: "POST", body: JSON.stringify({ token: state.inviteToken }) }); const invite = data.invitation; target.innerHTML = `<div class="invite-summary"><span>${icon("check")}</span><div><b>${esc(invite.email)}</b><small>角色：${esc(invite.roleName)} · 到期：${fmtDate(invite.expiresAt)}</small></div></div><form id="accept-invite-form" class="form-grid"><label>顯示名稱<input name="displayName" maxlength="100" placeholder="你的名字或團隊暱稱"></label><label>設定密碼<input name="password" type="password" minlength="12" autocomplete="new-password" required></label><label>確認密碼<input name="confirmPassword" type="password" minlength="12" autocomplete="new-password" required></label><button class="button primary">${icon("check")}建立帳號並進入工作區</button></form>`; root.querySelector("#accept-invite-form").onsubmit = async (event) => { event.preventDefault(); const form = new FormData(event.currentTarget); if (form.get("password") !== form.get("confirmPassword")) { toast("兩次輸入的密碼不一致", "error"); return; } try { await api("/api/v1/auth/accept-invitation", { method: "POST", body: JSON.stringify({ token: state.inviteToken, email: invite.email, displayName: form.get("displayName"), password: form.get("password") }) }); const loginData = await api("/api/v1/auth/login", { method: "POST", body: JSON.stringify({ email: invite.email, password: form.get("password") }) }); state.user = loginData.user; history.replaceState({}, "", "/"); location.hash = "#/chat"; } catch (error) { toast(error.message, "error"); } }; } catch (error) { target.innerHTML = `<div class="inline-error">${icon("warning")}${esc(error.message || "邀請不存在、已過期或已使用。")}<br><small>請向 Owner 取得新的邀請連結。</small></div>`; } }
 async function showEntry() { try { const data = await api("/api/v1/auth/bootstrap-status"); if (data.bootstrapRequired) showBootstrap(); else showAuth(); } catch { showAuth(); } }
 async function start() { if (location.pathname === "/accept-invite" || invitationTokenFromLocation()) { showInvitation(); return; } try { const data = await api("/api/v1/auth/status"); if (!data.user) { await showEntry(); return; } state.user = data.user; state.page = pageFromLocation(); await render(); } catch { await showEntry(); } }
 window.addEventListener("hashchange", () => { if (!state.user) return; state.page = pageFromLocation(); state.sidebarOpen = false; void render(); });
