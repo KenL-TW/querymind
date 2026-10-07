@@ -1,6 +1,6 @@
 # PX-01 Navigation Implementation
 
-**Status:** COMPLETE locally — disposable Worker/D1 regression passed; Production was not queried or changed.
+**Status:** DEPLOYED to Cloudflare Production on 2026-10-07 in Worker `5c222254-6f18-4c71-8db7-0588a926946e` (100% traffic).
 **Date:** 2026-10-07
 **Scope:** Capability-filtered navigation and Ask-first entry. PX-02 explainable-answer work is documented separately in [PX-02 Explainable Answer Experience](px-02-explainable-answer-experience.md). No backend changes, migrations, Production mutations, or deployment.
 
@@ -111,5 +111,5 @@ The initial sandbox run hit Windows ACL errors in Wrangler type generation, loca
 - Data Sources, Access, and Audit & System are navigation groupings, not consolidated pages.
 - Direct Query has no first-class SPA destination in the current code and remains outside PX-01 scope.
 - The Owner navigation is longer than the viewport and scrolls within the sidebar; all destinations remain discoverable through expandable groups.
-- PX-01 is complete for local verification. Production visual validation and deployment were intentionally not performed; the current request's scope was local implementation/verification only.
+- PX-01's implementation task was local-only; the subsequent combined PX-01/PX-02/PX-03 Production release is recorded in [the deployment record](../releases/px-product-simplification-production-release.md). Production public smoke passed; authenticated visual smoke was not run.
 - PX-02 is complete locally and has its own [closeout/evidence report](px-02-explainable-answer-experience.md). The next single suggested slice is contextual Save to Library after a successful answer, preserving ownership and rerun reauthorization.

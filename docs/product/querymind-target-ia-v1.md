@@ -1,6 +1,6 @@
 # QueryMind Target Information Architecture V1
 
-**Status:** Target IA with PX-01/PX-02/PX-03 local implementation evidence, updated 2026-10-07; Production unchanged
+**Status:** Target IA implemented through PX-01/PX-02/PX-03 and deployed to Cloudflare Production on 2026-10-07; see [release record](../releases/px-product-simplification-production-release.md).
 **Invariant:** Organize the frontend around user jobs while leaving Worker authorization and governance contracts authoritative.
 
 ## 1. Navigation tree
@@ -257,4 +257,4 @@ PX-03 is **COMPLETE locally**. A capability-gated Save action now appears with a
 
 Contextual saves reuse `insights` and `POST /api/v1/insights`; their Insight ID is the successful owned `queryRunId`, making repeat saves idempotent without a migration or another table. These rows store the question/title/note and `sql_text = NULL`, never result rows. Older saved SQL remains distinct; the Library does not render SQL, and reruns use the existing `/api/v1/query` route, while prompt-only saves use `/api/v1/chat`. Each creates a new execution under current authentication, RBAC, EffectiveScope, QueryPolicyEngine and DLP. The test suite covers capability denial, ownership, idempotency, failed runs, simulated save failure, SQL disclosure, deletion, current-scope rerun, and mobile layout.
 
-Evidence is retained under `docs/product/evidence/px-03/`; the implementation report is [PX-03 Contextual Save to Library](px-03-contextual-save-to-library.md). The run is local-only: Production was not queried, mutated or deployed.
+Evidence is retained under `docs/product/evidence/px-03/`; the implementation report is [PX-03 Contextual Save to Library](px-03-contextual-save-to-library.md). The original implementation run was local-only; its subsequent Production deployment is recorded in [the release record](../releases/px-product-simplification-production-release.md).

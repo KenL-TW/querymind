@@ -1,6 +1,6 @@
 # QueryMind PX-02 — Explainable Answer Experience
 
-**Status:** COMPLETE locally; Production was not queried or changed and no Worker was deployed.
+**Status:** DEPLOYED to Cloudflare Production on 2026-10-07 in Worker `5c222254-6f18-4c71-8db7-0588a926946e` (100% traffic).
 **Date:** 2026-10-07
 **Protected baseline:** P0 Governed Query Safety Core, P1 Explainability, P1.2 Feedback Trust, P2-F Semantic Runtime, P2-G observational evidence.
 
@@ -66,6 +66,8 @@ Regression hygiene: reusing a D1 already mutated by a prior semantic lifecycle s
 - [Mobile answer, table and horizontal-scroll affordance](evidence/px-02/px-02-answer-mobile.png)
 
 The screenshots contain only the seeded demo commerce data from disposable local D1.
+
+The subsequent combined PX-01/PX-02/PX-03 Production release passed public smoke checks; authenticated visual smoke was not run. See [the deployment record](../releases/px-product-simplification-production-release.md).
 
 ## Known UX debt
 

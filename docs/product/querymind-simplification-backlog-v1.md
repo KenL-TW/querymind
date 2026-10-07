@@ -1,6 +1,6 @@
 # QueryMind Simplification Backlog V1
 
-**Status:** PX-01 navigation, PX-02 explainable-answer experience, and PX-03 contextual Save to Library are implemented and verified locally; no Production deployment.
+**Status:** PX-01 navigation, PX-02 explainable-answer experience, and PX-03 contextual Save to Library are implemented, verified, and deployed to Cloudflare Production on 2026-10-07. See [release record](../releases/px-product-simplification-production-release.md).
 **Source:** [Product Simplification Audit V1](querymind-product-simplification-audit-v1.md).
 
 **Phase mapping:** The delivered product phase named PX-02 in the closeout report is the explainable-answer change in legacy backlog row PX-03. Legacy row PX-02 (Dashboard/Ask consolidation) was absorbed by PX-01's Ask-first route. PX-03 delivered the contextual-Save slice from legacy row PX-07. This mapping preserves the original audit IDs while keeping the current delivery sequence clear.

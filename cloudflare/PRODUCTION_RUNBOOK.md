@@ -2,7 +2,9 @@
 
 ## Release boundary
 
-Production is Worker `querymind` at `https://querymind.digitalaaronl.workers.dev`. The current verified Worker is `1e9dd6e7-949e-45e0-aa39-d6fc4285e2b6`; the immediate rollback Worker is `2ae1d74d-db8f-4acf-84be-bc863d89ba48`.
+Production is Worker `querymind` at `https://querymind.digitalaaronl.workers.dev`. The current verified Worker is `5c222254-6f18-4c71-8db7-0588a926946e` (100% traffic, deployed 2026-10-07); the immediate rollback Worker is `2b3d78f6-3758-4c3b-8b4f-92d086203e6e`.
+
+Latest release evidence: [PX-01/PX-02/PX-03 Product Simplification Production Release](../docs/releases/px-product-simplification-production-release.md).
 
 **Production Runtime = Cloudflare Worker only.** The legacy FastAPI / PostgreSQL / Nuxt / AWS paths are regression and historical reference only; they are not an approved production deployment source.
 
@@ -31,7 +33,7 @@ The Worker runs a static SPA plus two D1 bindings. Production AI uses Cloudflare
 
 ## Migration is separate
 
-Migration is never part of `deploy:production`. For a release requiring a reviewed migration, follow the Cloudflare D1 confirmation flow separately and record a backup/checkpoint. Current Production is APP `0001`–`0012`, DATA `0001`; P2-E migration `0012` is applied and no migration is pending.
+Migration is never part of `deploy:production`. For a release requiring a reviewed migration, follow the Cloudflare D1 confirmation flow separately and record a backup/checkpoint. Current Production is APP `0001`–`0013`, DATA `0001`; Wrangler remote migration checks on 2026-10-07 reported no pending migrations. The PX product release applied no migration.
 
 Do not roll back a forward D1 migration just because a Worker rollback is needed.
 

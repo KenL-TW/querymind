@@ -1,6 +1,6 @@
 # QueryMind PX-03 — Contextual Save to Library
 
-**Status:** LOCAL implementation; Production unchanged.
+**Status:** DEPLOYED to Cloudflare Production on 2026-10-07 in Worker `5c222254-6f18-4c71-8db7-0588a926946e` (100% traffic).
 **Date:** 2026-10-07
 **Scope:** Save a successful governed analysis into the user's existing Library without introducing another persistence model or granting future execution authority.
 
@@ -84,4 +84,4 @@ All screenshots use disposable demo data:
 
 ## Release boundary
 
-PX-03 is **LOCAL COMPLETE** after all listed gates pass. Production freshness is **NOT VERIFIED** in this run; no remote state was read or changed. Do not deploy as part of this implementation task.
+PX-03 was implemented and verified locally, then deployed with PX-01 and PX-02 on 2026-10-07. The release preserved existing Worker variables, applied no D1 migrations, and did not change `SEMANTIC_RUNTIME_CONTEXT_ENABLED` or mutate Semantic data. Immediate rollback is Worker `2b3d78f6-3758-4c3b-8b4f-92d086203e6e`. Production verification and test caveats are in [the deployment record](../releases/px-product-simplification-production-release.md).

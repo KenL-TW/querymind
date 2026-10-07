@@ -24,12 +24,13 @@ QueryMind is a governed AI data-query application. Production is the Cloudflare 
 
 ## Current release
 
-- Production Worker: `8eba9c55-96d2-4ce4-a58e-52acbc6936a6`
-- Rollback Worker: `1e9dd6e7-949e-45e0-aa39-d6fc4285e2b6`
-- Production baseline is APP migrations `0001`–`0012`; P2-E additive APP migration `0012` is applied; DATA remains `0001`.
-- Current semantic state: registry version 0; no assets, revisions, reviews, or suggestion runs
-- P2-G semantic evidence and P2-H read-only activation readiness are deployed additively; runtime semantic activation remains disabled and production registry state remains empty.
-- P2-Ia governance bootstrap UI is deployed as a design-time administration surface; it does not create Production authorities/policies automatically. Human configuration remains required.
+- Production Worker: `5c222254-6f18-4c71-8db7-0588a926946e` (100% traffic; deployed 2026-10-07)
+- Immediate rollback Worker: `2b3d78f6-3758-4c3b-8b4f-92d086203e6e`
+- Production baseline is APP migrations `0001`–`0013`; DATA remains `0001`. Wrangler remote migration checks on 2026-10-07 reported no pending migrations; this product release applied none.
+- Last recorded Semantic content read-back (2026-09-09): registry version 0; no assets, revisions, reviews, or suggestion runs. This PX release did not re-read Semantic D1 content.
+- P2-G semantic evidence and P2-H read-only activation readiness are deployed additively. The last recorded runtime flag state is disabled; this release preserved existing Production variables and did not change `SEMANTIC_RUNTIME_CONTEXT_ENABLED`.
+- P2-Ia governance bootstrap UI is a design-time administration surface; deployment does not create authorities, policies, or Semantic assets. Production governance D1 state was not changed or re-read for this release.
+- PX-01/PX-02/PX-03 product simplification release: [deployment record](releases/px-product-simplification-production-release.md). Existing Production variables were preserved; this release did not change `SEMANTIC_RUNTIME_CONTEXT_ENABLED` or mutate Semantic data.
 - Release evidence: [P2-G manifest](releases/manifests/p2-g-production.json) and [P2-G release report](releases/p2-g-semantic-evidence-hook.md)
 - Release evidence: [P2-H manifest](releases/manifests/p2-h-production.json) and [P2-H release report](releases/p2-h-semantic-runtime-activation-readiness.md)
 - Release evidence: [P2-F manifest](releases/manifests/p2-f-production.json)
