@@ -17,6 +17,8 @@ import { csvCell, publicRole } from "../src/routes/modules";
 import { authorizeReadOnlySql } from "../src/lib/query-policy";
 import { type EffectiveScope } from "../src/lib/scope";
 import { assertStaticRuntimeConfiguration } from "../src/lib/runtime-config";
+import { errorResponse, HttpError } from "../src/lib/http";
+import { gatewayCompletion } from "../src/routes/agent";
 
 const sensitivePolicies: ColumnPolicy[] = [
   { table_name: "customers", column_name: "email", mask_mode: "full" },
@@ -94,6 +96,50 @@ test.describe("production configuration fail-closed gate", () => {
 
 test("model egress redaction removes provider credentials and bearer tokens", () => {
   expect(redactModelText("api_key=sk-abcdefghijklmnop token=secret-value Bearer eyJhbGciOiJIUzI1NiJ9.payload.sig")).toBe("api_key= [REDACTED] token= [REDACTED] Bearer [REDACTED]");
+});
+
+test("AI Gateway failures include a safe reference and log only bounded diagnostics", async () => {
+  const previousFetch = globalThis.fetch;
+  const previousError = console.error;
+  const capturedLogs: string[] = [];
+  const privatePromptMarker = "private-prompt-marker-do-not-log";
+  const privateProviderBody = "provider-body-marker-do-not-return";
+  globalThis.fetch = (async () => new Response(JSON.stringify({ error: { message: privateProviderBody } }), {
+    status: 401,
+    headers: { "cf-ray": "ray-12345" },
+  })) as typeof fetch;
+  console.error = (...values: unknown[]) => { capturedLogs.push(values.map(String).join(" ")); };
+
+  try {
+    let failure: unknown;
+    try {
+      await gatewayCompletion({
+        ENVIRONMENT: "production",
+        AI_GATEWAY_URL: "https://gateway.ai.cloudflare.com/v1/account/gateway/openai/chat/completions",
+        AI_GATEWAY_TOKEN: "test-gateway-token-long-enough-to-pass",
+        AI_GATEWAY_BYOK_ALIAS: "production",
+      } as unknown as Env, "gpt-4o", [{ role: "user", content: privatePromptMarker }], false, "user-id", "session-id", new AbortController().signal);
+    } catch (error) {
+      failure = error;
+    }
+
+    expect(failure).toBeInstanceOf(HttpError);
+    expect(failure).toMatchObject({ status: 502, code: "AI_GATEWAY_ERROR", referenceId: expect.any(String) });
+    const response = await errorResponse(failure).json() as { error: string; message: string; referenceId: string };
+    expect(response).toMatchObject({ error: "AI_GATEWAY_ERROR", referenceId: (failure as HttpError).referenceId });
+    expect(JSON.stringify(response)).not.toContain(privatePromptMarker);
+    expect(JSON.stringify(response)).not.toContain(privateProviderBody);
+    expect(capturedLogs).toHaveLength(1);
+    expect(capturedLogs[0]).toContain('"event":"ai_gateway.request_failed"');
+    expect(capturedLogs[0]).toContain('"upstream_status":401');
+    expect(capturedLogs[0]).toContain('"cloudflare_ray_id":"ray-12345"');
+    expect(capturedLogs[0]).toContain((failure as HttpError).referenceId!);
+    expect(capturedLogs.join("\n")).not.toContain(privatePromptMarker);
+    expect(capturedLogs.join("\n")).not.toContain(privateProviderBody);
+  } finally {
+    globalThis.fetch = previousFetch;
+    console.error = previousError;
+  }
 });
 
 function authEnvironment(passwordTimestamp: { value: string }): Env {

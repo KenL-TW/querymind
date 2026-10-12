@@ -1549,6 +1549,38 @@ pre {
   32% { transform: translateY(-4px); opacity: 1; }
 }
 
+.chat-failure {
+  display: flex;
+  max-width: 760px;
+  margin: 12px auto 0;
+  padding: 12px 14px;
+  border: 1px solid #e8a7a5;
+  border-radius: var(--radius-md);
+  color: #762d31;
+  background: #fff4f2;
+}
+
+.chat-failure b {
+  font-size: 12px;
+}
+
+.chat-failure p {
+  margin: 5px 0;
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+.chat-failure small {
+  color: #80585a;
+  font-size: 10px;
+  overflow-wrap: anywhere;
+}
+
+.chat-failure code {
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 10px;
+}
+
 .composer {
   display: grid;
   flex: 0 0 auto;

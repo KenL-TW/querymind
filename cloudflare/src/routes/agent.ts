@@ -151,9 +151,10 @@ function mockCompletion(messages: ChatMessage[]): CompletionMessage {
   return { content: null, tool_calls: [{ id: crypto.randomUUID(), type: "function", function: { name: "run_readonly_sql", arguments: JSON.stringify({ sql }) } }] };
 }
 
-async function gatewayCompletion(env: Env, model: string, messages: ChatMessage[], includeTool: boolean, userId: string, sessionId: string, requestSignal: AbortSignal): Promise<CompletionMessage> {
+export async function gatewayCompletion(env: Env, model: string, messages: ChatMessage[], includeTool: boolean, userId: string, sessionId: string, requestSignal: AbortSignal): Promise<CompletionMessage> {
   if (env.ENVIRONMENT !== "production" && env.AI_MOCK_MODE === "true") return mockCompletion(messages);
   if (!gatewayConfigured(env)) throw new HttpError(503, "AI_NOT_CONFIGURED", "AI Gateway is not configured yet.");
+  const referenceId = crypto.randomUUID();
   let response: Response;
   try {
     response = await fetch(env.AI_GATEWAY_URL, {
@@ -170,10 +171,29 @@ async function gatewayCompletion(env: Env, model: string, messages: ChatMessage[
     });
   } catch (error) {
     if (requestSignal.aborted) throw new HttpError(499, "CLIENT_CLOSED_REQUEST", "The client disconnected before the AI request completed.");
-    if (error instanceof DOMException && (error.name === "TimeoutError" || error.name === "AbortError")) throw new HttpError(504, "AI_GATEWAY_TIMEOUT", "AI Gateway did not respond within 30 seconds.");
-    throw new HttpError(502, "AI_GATEWAY_ERROR", "AI Gateway request failed.");
+    const timedOut = error instanceof DOMException && (error.name === "TimeoutError" || error.name === "AbortError");
+    console.error(JSON.stringify({
+      event: "ai_gateway.request_failed",
+      reference_id: referenceId,
+      failure_type: timedOut ? "timeout" : "network_error",
+      error_type: error instanceof DOMException ? error.name : error instanceof TypeError ? "TypeError" : error instanceof Error ? "Error" : "Unknown",
+      model,
+    }));
+    if (timedOut) throw new HttpError(504, "AI_GATEWAY_TIMEOUT", "AI Gateway did not respond within 30 seconds.", referenceId);
+    throw new HttpError(502, "AI_GATEWAY_ERROR", "AI Gateway request failed.", referenceId);
   }
-  if (!response.ok) throw new HttpError(response.status === 429 ? 429 : 502, "AI_GATEWAY_ERROR", "AI Gateway request failed.");
+  if (!response.ok) {
+    const rayId = response.headers.get("cf-ray");
+    console.error(JSON.stringify({
+      event: "ai_gateway.request_failed",
+      reference_id: referenceId,
+      failure_type: "http_response",
+      upstream_status: response.status,
+      ...(rayId && /^[A-Za-z0-9-]{1,80}$/u.test(rayId) ? { cloudflare_ray_id: rayId } : {}),
+      model,
+    }));
+    throw new HttpError(response.status === 429 ? 429 : 502, "AI_GATEWAY_ERROR", "AI Gateway request failed.", referenceId);
+  }
   const value = await readResponseJson(response);
   const message = (value as { choices?: Array<{ message?: CompletionMessage }> }).choices?.[0]?.message;
   if (!message) throw new HttpError(502, "AI_INVALID_RESPONSE", "AI Gateway did not return a completion message.");
@@ -296,9 +316,9 @@ function sseEvent(event: string, data: unknown): Uint8Array {
   return new TextEncoder().encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
 }
 
-function publicError(error: unknown): { error: string; message: string } {
+function publicError(error: unknown): { error: string; message: string; referenceId?: string } {
   return error instanceof HttpError
-    ? { error: error.code, message: error.message }
+    ? { error: error.code, message: error.message, ...(error.referenceId ? { referenceId: error.referenceId } : {}) }
     : { error: "AGENT_FAILED", message: "The agent could not complete this request." };
 }
 

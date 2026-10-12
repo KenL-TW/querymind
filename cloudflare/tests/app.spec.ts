@@ -1,5 +1,5 @@
 import { expect, test } from "playwright/test";
-import { mkdir } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import {
@@ -130,6 +130,42 @@ test.describe("QueryMind product workspace", () => {
     }
     await expect(navigation.locator('[data-route="usage"]')).toHaveCount(0);
     await page.screenshot({ path: path.join(evidenceDir, "owner-nav.png"), fullPage: false });
+  });
+
+  test("AI Gateway failure keeps the original prompt visible with a stable reference", async ({ page }) => {
+    const sessionId = "11111111-1111-4111-8111-111111111111";
+    const [document, appScript, appStyles] = await Promise.all([
+      readFile(new URL("../public/index.html", import.meta.url), "utf8"),
+      readFile(new URL("../public/app.js", import.meta.url), "utf8"),
+      readFile(new URL("../public/styles.css", import.meta.url), "utf8"),
+    ]);
+    await page.route("**/*", async (route) => {
+      const url = new URL(route.request().url());
+      if (url.pathname === "/" || url.pathname === "/index.html") return route.fulfill({ contentType: "text/html", body: document });
+      if (url.pathname === "/app.js") return route.fulfill({ contentType: "text/javascript", body: appScript });
+      if (url.pathname === "/styles.css") return route.fulfill({ contentType: "text/css", body: appStyles });
+      if (url.pathname === "/api/v1/auth/status") return route.fulfill({ contentType: "application/json", body: JSON.stringify({ user: { id: "owner-fixture", email: "owner@example.test", displayName: "Owner Fixture", roleName: "owner", capabilities: ["*"] } }) });
+      if (url.pathname === "/api/v1/sessions" && route.request().method() === "POST") return route.fulfill({ contentType: "application/json", body: JSON.stringify({ session: { id: sessionId, title: "Gateway error fixture" } }) });
+      if (url.pathname === "/api/v1/sessions" || url.pathname === "/api/v1/sessions/" + sessionId + "/messages") {
+        return route.fulfill({ contentType: "application/json", body: JSON.stringify(url.pathname.endsWith("/messages") ? { messages: [] } : { sessions: [{ id: sessionId, title: "Gateway error fixture", updatedAt: "2026-10-09T00:00:00.000Z", pinned: false }] }) });
+      }
+      if (url.pathname === "/api/v1/chat") return route.fulfill({ status: 502, contentType: "application/json", body: JSON.stringify({ error: "AI_GATEWAY_ERROR", message: "AI Gateway request failed.", referenceId: "reference-fixture-123" }) });
+      return route.fulfill({ status: 404, contentType: "application/json", body: JSON.stringify({ error: "NOT_FOUND" }) });
+    });
+    await page.goto(absoluteUrl("/"), { waitUntil: "domcontentloaded" });
+
+    const prompt = "請依商品列出銷售額";
+    await page.getByLabel("輸入資料問題").fill(prompt);
+    await page.getByRole("button", { name: "送出" }).click();
+
+    const failure = page.getByRole("alert");
+    await expect(failure).toContainText("這次提問沒有完成");
+    await expect(failure).toContainText("原提問已保留");
+    await expect(failure).toContainText("AI_GATEWAY_ERROR");
+    await expect(failure).toContainText("reference-fixture-123");
+    await expect(page.getByLabel("輸入資料問題")).toHaveValue(prompt);
+    await expect(page.getByRole("button", { name: "重新送出" })).toBeEnabled();
+    await expect(page.locator(".toast.error")).toHaveCount(0);
   });
 
   test("History bookmark and reload preserve owned session continuity into Ask", async ({ page }) => {

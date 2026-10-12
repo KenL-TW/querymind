@@ -8,6 +8,7 @@ export class HttpError extends Error {
     readonly status: number,
     readonly code: string,
     message: string,
+    readonly referenceId?: string,
   ) {
     super(message);
   }
@@ -19,7 +20,7 @@ export function json(body: unknown, status = 200): Response {
 
 export function errorResponse(error: unknown): Response {
   if (error instanceof HttpError) {
-    return json({ error: error.code, message: error.message }, error.status);
+    return json({ error: error.code, message: error.message, ...(error.referenceId ? { referenceId: error.referenceId } : {}) }, error.status);
   }
   return json({ error: "INTERNAL_ERROR", message: "An unexpected server error occurred." }, 500);
 }
