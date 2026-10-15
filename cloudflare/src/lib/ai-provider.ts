@@ -262,6 +262,10 @@ function isControlledResponseShapeSmoke(request: ProviderRequest): boolean {
     && request.responseFormat === undefined;
 }
 
+export function shouldEmitWorkersAiShapeDiagnostic(env: Pick<Env, "ENVIRONMENT">, request: ProviderRequest): boolean {
+  return env.ENVIRONMENT === "preview" && isControlledResponseShapeSmoke(request);
+}
+
 function toProviderMessages(messages: ProviderMessage[]): Array<Record<string, unknown>> {
   return messages.map((message) => {
     if (message.role === "tool") {
@@ -469,7 +473,7 @@ async function workersAiCompletion(env: Env, request: ProviderRequest, reference
   }
   let raw: unknown;
   try { raw = await raceWorkersAi(pending, request.signal, referenceId); } catch (error) { throw normalizeWorkersAiProviderError(error, referenceId); }
-  if (env.ENVIRONMENT === "preview" && isControlledResponseShapeSmoke(request)) {
+  if (shouldEmitWorkersAiShapeDiagnostic(env, request)) {
     console.info(JSON.stringify({
       event: "ai_provider.response_shape",
       provider_id: "workers_ai",

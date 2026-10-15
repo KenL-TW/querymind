@@ -1,6 +1,6 @@
 import { expect, test } from "playwright/test";
 import { aiAvailability, gatewayHeaders, resolveAiProvider } from "../src/lib/ai-config";
-import { completeWithAiProvider, type ProviderMessage, type ProviderTool } from "../src/lib/ai-provider";
+import { completeWithAiProvider, shouldEmitWorkersAiShapeDiagnostic, type ProviderMessage, type ProviderRequest, type ProviderTool } from "../src/lib/ai-provider";
 import { assertNoSensitiveInference } from "../src/lib/dlp";
 import { errorResponse, HttpError } from "../src/lib/http";
 import { authorizeReadOnlySql } from "../src/lib/query-policy";
@@ -58,6 +58,90 @@ const sqlScope: EffectiveScope = {
 const sqlCatalog = { tables: { products: { tableName: "products", columns: ["id", "name"] } } };
 
 test.describe("PX-AI-01 provider compatibility", () => {
+  test("Workers AI shape diagnostic gate is exact and Preview-only", () => {
+    const smoke: ProviderRequest = {
+      model: "@cf/zai-org/glm-4.7-flash",
+      messages: [{ role: "user", content: "Return exactly: READY" }],
+      temperature: 0,
+      maxOutputTokens: 8,
+      signal: signal(),
+    };
+
+    expect(shouldEmitWorkersAiShapeDiagnostic({ ENVIRONMENT: "preview" }, smoke)).toBe(true);
+    expect(shouldEmitWorkersAiShapeDiagnostic({ ENVIRONMENT: "production" }, smoke)).toBe(false);
+    expect(shouldEmitWorkersAiShapeDiagnostic({ ENVIRONMENT: "preview" }, {
+      ...smoke,
+      messages: [{ role: "user", content: "ordinary user request" }],
+    })).toBe(false);
+    expect(shouldEmitWorkersAiShapeDiagnostic({ ENVIRONMENT: "preview" }, {
+      ...smoke,
+      messages: [{ role: "user", content: "Return exactly: READY " }],
+    })).toBe(false);
+    expect(shouldEmitWorkersAiShapeDiagnostic({ ENVIRONMENT: "preview" }, {
+      ...smoke,
+      messages: [
+        { role: "system", content: "system" },
+        { role: "user", content: "Return exactly: READY" },
+      ],
+    })).toBe(false);
+    expect(shouldEmitWorkersAiShapeDiagnostic({ ENVIRONMENT: "preview" }, { ...smoke, tools: [tool] })).toBe(false);
+    expect(shouldEmitWorkersAiShapeDiagnostic({ ENVIRONMENT: "preview" }, { ...smoke, responseFormat: "json_object" })).toBe(false);
+  });
+
+  test("shape event is captured before normalization and excludes provider content and credentials", async () => {
+    const generatedContent = "private-model-response-marker-pxai-a5";
+    const toolArguments = "private-tool-arguments-marker-pxai-a5";
+    const credential = "private-provider-credential-marker-pxai-a5";
+    const previousInfo = console.info;
+    const logs: string[] = [];
+    let inferenceCalls = 0;
+    console.info = (...values: unknown[]) => { logs.push(values.map(String).join(" ")); };
+    try {
+      const env = workersAiEnv(async () => {
+        inferenceCalls += 1;
+        return {
+          response: generatedContent,
+          choices: "private-raw-shape-marker-pxai-a5",
+          tool_calls: [{ arguments: toolArguments }],
+          credential,
+        };
+      });
+      const request: ProviderRequest = {
+        model: "@cf/zai-org/glm-4.7-flash",
+        messages: [{ role: "user", content: "Return exactly: READY" }],
+        temperature: 0,
+        maxOutputTokens: 8,
+        signal: signal(),
+      };
+
+      await expect(completeWithAiProvider(env, request)).rejects.toMatchObject({ code: "AI_PROVIDER_INVALID_RESPONSE" });
+
+      expect(inferenceCalls).toBe(1);
+      const shapeLogs = logs.filter((entry) => entry.includes('"event":"ai_provider.response_shape"'));
+      expect(shapeLogs).toHaveLength(1);
+      expect(JSON.parse(shapeLogs[0])).toMatchObject({
+        event: "ai_provider.response_shape",
+        provider_id: "workers_ai",
+        model: "@cf/zai-org/glm-4.7-flash",
+        choices_type: "string",
+        choices_count: 0,
+        content_source: "response",
+        content_type: "string",
+        content_length: generatedContent.length,
+        tool_calls_present: true,
+        tool_call_count: 1,
+      });
+      expect(logs.join("\n")).not.toContain("Return exactly: READY");
+      expect(logs.join("\n")).not.toContain("READY");
+      expect(logs.join("\n")).not.toContain(generatedContent);
+      expect(logs.join("\n")).not.toContain(toolArguments);
+      expect(logs.join("\n")).not.toContain(credential);
+      expect(logs.join("\n")).not.toContain("private-raw-shape-marker-pxai-a5");
+    } finally {
+      console.info = previousInfo;
+    }
+  });
+
   test("C01 defaults to the existing OpenAI Gateway path and validates the server-side allowlist", () => {
     expect(resolveAiProvider(openAiEnv())).toEqual({ providerId: "openai_gateway", model: "gpt-4o" });
     expect(resolveAiProvider(openAiEnv({ AI_PROVIDER: undefined }))).toEqual({ providerId: "openai_gateway", model: "gpt-4o" });
