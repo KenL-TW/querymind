@@ -1,0 +1,165 @@
+import { expect, test } from "playwright/test";
+import { gateQueryIntent, numericGroundingSummary, reconstructConversationHistory, verifyNumericGrounding, type QueryIntent } from "../src/lib/agent-contract";
+import { authorizedCatalogContext, authorizedSchemaCatalog } from "../src/lib/schema-catalog";
+import { executeAfterQueryPolicy, authorizeReadOnlySql } from "../src/lib/query-policy";
+import type { EffectiveScope } from "../src/lib/scope";
+import { publicMessageMetadata } from "../src/lib/sessions";
+
+const ambiguousCases = ["哪些商品表現最好？", "哪個客戶最重要？", "哪個類別最好？"];
+
+const viewerScope: EffectiveScope = {
+  userId: "viewer",
+  roleId: "viewer",
+  roleName: "viewer",
+  scopeKey: "role:viewer",
+  policyVersion: "test",
+  capabilities: ["chat"],
+  datasource: { id: "querymind-data", tables: {
+    employees: { columns: ["id", "name", "dept_id", "title", "hire_date", "is_active"], canViewRaw: false, canExport: false, canBulkExport: false },
+  } },
+  canQuery: true,
+  canViewRawData: false,
+  canExport: false,
+  canBulkExport: false,
+};
+
+const rawCatalog = { tables: { employees: { tableName: "employees", columns: ["id", "name", "dept_id", "title", "hire_date", "is_active", "salary"] } } };
+
+function intent(input: Partial<QueryIntent> & Pick<QueryIntent, "decision">): QueryIntent {
+  return { queryType: null, metric: null, metricEvidence: null, target: null, targetEvidence: null, ...input };
+}
+
+test.describe("PX-AI-01B1 governed intent gate", () => {
+  for (const prompt of ambiguousCases) {
+    test(`ambiguous analytical request does not enter SQL stage: ${prompt}`, () => {
+      const proposed = intent({ decision: "QUERY", queryType: "ANALYTICAL", metric: "銷售額", metricEvidence: prompt, target: "商品", targetEvidence: "商品" });
+      const decision = gateQueryIntent(proposed, [prompt], []);
+      let queryExecutions = 0;
+      if (decision.kind === "QUERY") queryExecutions += 1;
+      expect(decision.kind).toBe("CLARIFY");
+      expect(queryExecutions).toBe(0);
+    });
+  }
+
+  test("explicit metric evidence resolves while preserving follow-up evidence from the prior user turn", () => {
+    const firstTurn = intent({ decision: "QUERY", queryType: "ANALYTICAL", metric: "銷售額", metricEvidence: "銷售額", target: "商品", targetEvidence: "商品" });
+    expect(gateQueryIntent(firstTurn, ["請依商品列出銷售額"], []).kind).toBe("QUERY");
+    const quantityTurn = intent({ decision: "QUERY", queryType: "ANALYTICAL", metric: "銷售量", metricEvidence: "銷售量", target: "商品", targetEvidence: "商品" });
+    expect(gateQueryIntent(quantityTurn, ["銷售量最高的商品"], []).kind).toBe("QUERY");
+    const followUp = intent({ decision: "QUERY", queryType: "ANALYTICAL", metric: "銷售額", metricEvidence: "銷售額", target: "商品", targetEvidence: "商品" });
+    expect(gateQueryIntent(followUp, ["請依商品列出銷售額", "那只看最高的兩個"], []).kind).toBe("QUERY");
+  });
+
+  test("approved reference evidence can resolve a measure, but unsupported inferred evidence cannot", () => {
+    const semanticMetric = intent({ decision: "QUERY", queryType: "ANALYTICAL", metric: "gross revenue", metricEvidence: "gross revenue" });
+    expect(gateQueryIntent(semanticMetric, ["列出結果"], ["gross revenue: SUM(order_items.subtotal)"]).kind).toBe("QUERY");
+    const inventedMetric = intent({ decision: "QUERY", queryType: "ANALYTICAL", metric: "銷售額", metricEvidence: "表現最好" });
+    expect(gateQueryIntent(inventedMetric, ["哪些商品表現最好？"], []).kind).toBe("CLARIFY");
+  });
+});
+
+test.describe("PX-AI-01B1 C06 deterministic policy evidence", () => {
+  test("authorized catalog includes employees but excludes salary", async () => {
+    const database = {
+      prepare(sql: string) {
+        return {
+          bind() { return this; },
+          async first() { return sql.includes("schema_catalog_state") ? { schema_snapshot_id: "snapshot-fixture" } : null; },
+          async all() {
+            if (sql.includes("schema_catalog_tables")) return { results: [{ table_name: "employees", description: "Employees" }] };
+            if (sql.includes("schema_catalog_columns")) return { results: ["id", "name", "dept_id", "title", "hire_date", "is_active", "salary"].map((column_name) => ({ table_name: "employees", column_name, data_type: "TEXT", is_not_null: 0, is_primary_key: 0, description: "" })) };
+            if (sql.includes("schema_catalog_foreign_keys")) return { results: [] };
+            throw new Error("Unexpected catalog statement");
+          },
+        };
+      },
+    };
+    const catalog = await authorizedSchemaCatalog({ QUERYMIND_APP: database } as unknown as Env, viewerScope);
+    expect(catalog.tables.map((table) => table.name)).toContain("employees");
+    expect(catalog.tables[0].columns.map((column) => column.name)).not.toContain("salary");
+    expect(authorizedCatalogContext(catalog)).not.toMatch(/salary/iu);
+  });
+
+  test("explicit unauthorized salary projection is denied before DLP and data execution", async () => {
+    let dlpCalls = 0;
+    let dataExecutions = 0;
+    let resultPayload: unknown = undefined;
+    await expect(executeAfterQueryPolicy(
+      async () => authorizeReadOnlySql("SELECT salary FROM employees", 100, viewerScope, rawCatalog),
+      async () => { dlpCalls += 1; },
+      async () => { dataExecutions += 1; resultPayload = [{ salary: 120_000 }]; return resultPayload; },
+    )).rejects.toMatchObject({ code: "COLUMN_NOT_ALLOWED" });
+    expect(dlpCalls).toBe(0);
+    expect(dataExecutions).toBe(0);
+    expect(resultPayload).toBeUndefined();
+  });
+});
+
+test.describe("PX-AI-01B1 multi-turn history reconstruction", () => {
+  test("replays user intent, assistant tool call, matching tool result IDs, and final answer", () => {
+    const storedIntent = intent({ decision: "QUERY", queryType: "ANALYTICAL", metric: "銷售額", metricEvidence: "銷售額", target: "商品", targetEvidence: "商品" });
+    const history = reconstructConversationHistory([
+      { role: "user", content: "請依商品列出銷售額" },
+      { role: "assistant", content: "查詢完成，共取得 1 筆資料。", metadata_json: JSON.stringify({ rowCount: 1, rows: [{ product_name: "A", sales_amount: 13160 }], agentContext: { version: 1, intentCallId: "intent-call-1", intent: storedIntent, queryCallId: "sql-call-1", queryRunId: "query-run-1" } }) },
+    ], [{ id: "query-run-1", generated_sql: "SELECT name, SUM(subtotal) AS sales_amount FROM order_items GROUP BY name" }]);
+
+    expect(history.map((message) => message.role)).toEqual(["user", "assistant", "tool", "assistant", "tool", "assistant"]);
+    expect(history[1]).toMatchObject({ role: "assistant", toolCalls: [{ id: "intent-call-1", name: "resolve_analytics_intent" }] });
+    expect(history[2]).toMatchObject({ role: "tool", toolCallId: "intent-call-1" });
+    expect(history[3]).toMatchObject({ role: "assistant", toolCalls: [{ id: "sql-call-1", name: "run_readonly_sql", arguments: expect.stringContaining("SELECT name") }] });
+    expect(history[4]).toMatchObject({ role: "tool", toolCallId: "sql-call-1", content: expect.stringContaining("13160") });
+    expect(history[5]).toMatchObject({ role: "assistant", content: "查詢完成，共取得 1 筆資料。" });
+  });
+
+  test("does not synthesize a historic SQL call when the governed query row is missing", () => {
+    const history = reconstructConversationHistory([
+      { role: "user", content: "請依商品列出銷售額" },
+      { role: "assistant", content: "Clarification", metadata_json: JSON.stringify({ agentContext: { version: 1, intentCallId: "intent-call-2", intent: intent({ decision: "CLARIFY" }), queryCallId: "sql-call-2", queryRunId: "missing" } }) },
+    ], []);
+    expect(history.some((message) => message.role === "assistant" && message.toolCalls?.some((call) => call.name === "run_readonly_sql"))).toBe(false);
+    expect(history.some((message) => message.role === "tool" && message.toolCallId === "intent-call-2")).toBe(true);
+  });
+
+  test("public session history omits private agent tool state while retaining product metadata", () => {
+    const value = JSON.parse(publicMessageMetadata(JSON.stringify({ queryRunId: "run-1", rows: [{ amount: 1 }], agentContext: { queryCallId: "private-call-id" } }))) as Record<string, unknown>;
+    expect(value).toMatchObject({ queryRunId: "run-1", rows: [{ amount: 1 }] });
+    expect(value).not.toHaveProperty("agentContext");
+  });
+});
+
+test.describe("PX-AI-01B1 in-memory numeric grounding", () => {
+  const observation = { rowCount: 2, rows: [{ product: "Product A", amount: 13160 }, { product: "Product B", amount: 10000 }] };
+
+  for (const answer of ["13,160", "13,160元", "NT$13,160", "1. Product A：13,160"]) {
+    test(`accepts grounded amount and formatting: ${answer}`, () => {
+      const summary = numericGroundingSummary(verifyNumericGrounding(answer, observation));
+      expect(summary.unsupportedCount).toBe(0);
+      expect(summary.claimCount).toBe(answer.startsWith("1.") ? 2 : 1);
+    });
+  }
+
+  test("accepts an evidenced total and percentage derivable from an observed numeric column", () => {
+    expect(numericGroundingSummary(verifyNumericGrounding("合計：23,160；最大商品占比 56.8%", observation)).unsupportedCount).toBe(0);
+    expect(numericGroundingSummary(verifyNumericGrounding("共2筆資料", observation)).unsupportedCount).toBe(0);
+  });
+
+  test("does not accept a row count as an unrelated business value or derive totals from identifiers", () => {
+    const countOnly = numericGroundingSummary(verifyNumericGrounding("amount: 2", { rowCount: 2, rows: [{ amount: 5 }, { amount: 9 }] }));
+    expect(countOnly.unsupportedCount).toBe(1);
+    const identifiers = numericGroundingSummary(verifyNumericGrounding("合計：3", { rowCount: 2, rows: [{ product_id: 1 }, { product_id: 2 }] }));
+    expect(identifiers.unsupportedCount).toBe(1);
+  });
+
+  test("classifies list ordinal and date/time separately from business values", () => {
+    const summary = numericGroundingSummary(verifyNumericGrounding("1. Product A — 13,160\n更新時間：2026-10-15 09:30", observation));
+    expect(summary.categories["ORDINAL / LIST INDEX"]).toBe(1);
+    expect(summary.categories["DATE/TIME"]).toBe(5);
+    expect(summary.unsupportedCount).toBe(0);
+  });
+
+  test("rejects a factual amount absent from and not derivable from the observation", () => {
+    const claims = verifyNumericGrounding("Product A amount: 999", observation);
+    expect(numericGroundingSummary(claims).unsupportedCount).toBe(1);
+    expect(claims[0]).toMatchObject({ category: "UNSUPPORTED", grounded: false });
+  });
+});

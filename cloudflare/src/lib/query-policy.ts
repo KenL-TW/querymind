@@ -149,6 +149,18 @@ function rewriteRows(sql: string, sources: Source[], scope: EffectiveScope): str
 
 export interface GovernedQuery extends ValidatedQuery { referencedTables: string[]; }
 
+/** Shared ordering boundary for agent execution: authorization and DLP must both finish before business D1 is touched. */
+export async function executeAfterQueryPolicy<T>(
+  authorize: () => Promise<GovernedQuery>,
+  assertSafe: (query: GovernedQuery) => Promise<void>,
+  execute: (query: GovernedQuery) => Promise<T>,
+): Promise<{ query: GovernedQuery; result: T }> {
+  const query = await authorize();
+  await assertSafe(query);
+  const result = await execute(query);
+  return { query, result };
+}
+
 export function authorizeReadOnlySql(sql: unknown, maxRows: number, scope: EffectiveScope, catalog: QueryCatalog): GovernedQuery {
   const initial = validateReadOnlySql(sql, maxRows);
   if (!scope.canQuery) throw new HttpError(403, "RBAC_FORBIDDEN", "Your data scope is not allowed to query.");

@@ -5,6 +5,7 @@ import { assertNoSensitiveInference } from "../src/lib/dlp";
 import { errorResponse, HttpError } from "../src/lib/http";
 import { authorizeReadOnlySql } from "../src/lib/query-policy";
 import type { EffectiveScope } from "../src/lib/scope";
+import { reconstructConversationHistory, type QueryIntent } from "../src/lib/agent-contract";
 
 const signal = () => new AbortController().signal;
 const tool: ProviderTool = {
@@ -426,6 +427,34 @@ test.describe("PX-AI-01 provider compatibility", () => {
     });
     expect((inputs[1].messages as Array<Record<string, unknown>>)[1]).toMatchObject({ role: "assistant", content: null, tool_calls: [{ id: call.id, function: { name: "run_readonly_sql" } }] });
     expect((inputs[1].messages as Array<Record<string, unknown>>)[2]).toMatchObject({ role: "tool", tool_call_id: call.id });
+  });
+
+  test("C10 reconstructed persisted assistant and tool IDs survive the next Workers AI request", async () => {
+    const captured: Record<string, unknown>[] = [];
+    const storedIntent: QueryIntent = { decision: "QUERY", queryType: "ANALYTICAL", metric: "銷售額", metricEvidence: "銷售額", target: "商品", targetEvidence: "商品" };
+    const history = reconstructConversationHistory([
+      { role: "user", content: "請依商品列出銷售額" },
+      { role: "assistant", content: "查詢完成", metadata_json: JSON.stringify({ rowCount: 1, rows: [{ product_name: "A", sales_amount: 13160 }], agentContext: { version: 1, intentCallId: "intent-call-persisted", intent: storedIntent, queryCallId: "sql-call-persisted", queryRunId: "query-run-persisted" } }) },
+    ], [{ id: "query-run-persisted", generated_sql: "SELECT name, SUM(subtotal) AS sales_amount FROM order_items GROUP BY name" }]);
+    const env = workersAiEnv(async (_model, input) => {
+      captured.push(input);
+      return { response: null, tool_calls: [{ id: "next-call", name: "run_readonly_sql", arguments: { sql: "SELECT name FROM products LIMIT 2" } }] };
+    });
+    await completeWithAiProvider(env, {
+      model: "@cf/zai-org/glm-4.7-flash",
+      messages: [...history, { role: "user", content: "那只看最高的兩個" }],
+      tools: [tool],
+      toolChoice: "required",
+      temperature: 0.1,
+      maxOutputTokens: 800,
+      signal: signal(),
+    });
+    const messages = captured[0].messages as Array<Record<string, unknown>>;
+    expect(messages).toContainEqual(expect.objectContaining({ role: "assistant", tool_calls: [expect.objectContaining({ id: "intent-call-persisted" })] }));
+    expect(messages).toContainEqual(expect.objectContaining({ role: "tool", tool_call_id: "intent-call-persisted" }));
+    expect(messages).toContainEqual(expect.objectContaining({ role: "assistant", tool_calls: [expect.objectContaining({ id: "sql-call-persisted" })] }));
+    expect(messages).toContainEqual(expect.objectContaining({ role: "tool", tool_call_id: "sql-call-persisted" }));
+    expect(messages.at(-1)).toMatchObject({ role: "user", content: "那只看最高的兩個" });
   });
 
   test("provider errors return safe taxonomy and never log prompt or provider payload", async () => {

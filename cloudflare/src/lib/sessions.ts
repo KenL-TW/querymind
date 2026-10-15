@@ -39,3 +39,15 @@ export function sessionResponse(session: SessionRow): Record<string, unknown> {
     updatedAt: session.updated_at,
   };
 }
+
+/** Internal agent tool state is used to reconstruct provider history but is never part of a session API response. */
+export function publicMessageMetadata(metadataJson: string): string {
+  try {
+    const metadata = JSON.parse(metadataJson) as unknown;
+    if (!metadata || typeof metadata !== "object" || Array.isArray(metadata) || !Object.hasOwn(metadata, "agentContext")) return metadataJson;
+    const { agentContext: _privateAgentContext, ...publicMetadata } = metadata as Record<string, unknown>;
+    return JSON.stringify(publicMetadata);
+  } catch {
+    return metadataJson;
+  }
+}

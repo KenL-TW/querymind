@@ -13,7 +13,7 @@
     "test:db:init": "node scripts/init-local-test.mjs",
     "test:bootstrap": "node scripts/bootstrap-test-owner.mjs",
     "test": "npm run test:unit",
-    "test:unit": "playwright test tests/security.spec.ts tests/rate-limit.spec.ts tests/ai-provider.spec.ts tests/explainability.spec.ts tests/semantic.spec.ts tests/semantic-suggestions.spec.ts tests/approved-semantic-context.spec.ts tests/semantic-evidence.spec.ts tests/semantic-runtime-readiness.spec.ts",
+    "test:unit": "playwright test tests/security.spec.ts tests/rate-limit.spec.ts tests/ai-provider.spec.ts tests/agent-contract.spec.ts tests/explainability.spec.ts tests/semantic.spec.ts tests/semantic-suggestions.spec.ts tests/approved-semantic-context.spec.ts tests/semantic-evidence.spec.ts tests/semantic-runtime-readiness.spec.ts",
     "test:e2e": "playwright test tests/app.spec.ts tests/px-03-library.spec.ts tests/rbac.spec.ts tests/semantic-api.spec.ts tests/semantic-suggestions-api.spec.ts tests/semantic-suggestions-ui.spec.ts tests/semantic-governance-ui.spec.ts",
     "test:all": "node scripts/run-test-all.mjs",
     "migration:check": "node scripts/check-migration-immutability.mjs",

@@ -1,7 +1,7 @@
 import { requireCapability, requireUser } from "../lib/auth";
 import { audit } from "../lib/audit";
 import { HttpError, json, readJson } from "../lib/http";
-import { ensureOwnedSession, sessionResponse, type SessionRow } from "../lib/sessions";
+import { ensureOwnedSession, publicMessageMetadata, sessionResponse, type SessionRow } from "../lib/sessions";
 import { consumeRateLimit, hashSubject } from "../lib/rate-limit";
 
 const SESSION_RETENTION_DAYS = 90;
@@ -104,7 +104,8 @@ export async function listMessages(request: Request, env: Env, sessionId: string
   requireCapability(user, "manage_own_sessions");
   await ensureOwnedSession(env, sessionId, user.id);
   const result = await env.QUERYMIND_APP.prepare("SELECT id, role, content, metadata_json, created_at FROM chat_messages WHERE session_id = ? ORDER BY created_at ASC LIMIT 500").bind(sessionId).all<{ id: string; role: string; content: string; metadata_json: string; created_at: string }>();
-  return json({ messages: result.results ?? [] });
+  const messages = (result.results ?? []).map((message) => ({ ...message, metadata_json: publicMessageMetadata(message.metadata_json) }));
+  return json({ messages });
 }
 
 export async function addMessage(request: Request, env: Env, sessionId: string): Promise<Response> {

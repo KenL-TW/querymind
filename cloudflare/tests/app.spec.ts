@@ -1,4 +1,5 @@
 import { expect, test } from "playwright/test";
+import { numericGroundingSummary, verifyNumericGrounding } from "../src/lib/agent-contract";
 import { mkdir, readFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -426,6 +427,8 @@ test.describe("QueryMind product workspace", () => {
     };
     expect(payload.rowCount).toBe(3);
     expect(payload.rows).toHaveLength(3);
+    const grounding = numericGroundingSummary(verifyNumericGrounding(payload.answer, { rows: payload.rows, rowCount: payload.rowCount }));
+    expect(grounding.unsupportedCount).toBe(0);
     expect(payload.explainability.understanding.metrics).toContain("sales amount");
     expect(payload.explainability.understanding.dimensions).toContain("product");
     expect(payload.explainability.sources.tables.map((source) => source.name)).toEqual(expect.arrayContaining(["order_items", "orders", "products"]));
@@ -487,6 +490,58 @@ test.describe("QueryMind product workspace", () => {
     expect(["auto", "scroll"]).toContain(tableScroll.overflowX);
     await page.screenshot({ path: path.join(evidenceDir, "px-02-answer-mobile.png"), fullPage: false });
     expect(consoleIssues, consoleIssues.join("\n")).toEqual([]);
+  });
+
+  test("PX-AI-01B1 C05 ambiguous metric asks before executing a business query", async ({ page }) => {
+    test.skip(!allowMutatingE2E, "This deterministic conversation test writes to the isolated local D1 fixture.");
+    const api = page.context().request;
+    await loginApi(api);
+    const created = await api.post(absoluteUrl("/api/v1/sessions"), { data: { title: "PX-AI-01B1 C05 ambiguity gate" } });
+    await expectOk(created, "create C05 fixture session");
+    const sessionId = (await created.json() as { session: { id: string } }).session.id;
+    try {
+      const response = await api.post(absoluteUrl("/api/v1/chat"), { data: { sessionId, prompt: "哪些商品表現最好？" } });
+      await expectOk(response, "C05 ambiguous prompt");
+      const result = await response.json() as { answer: string; rows: unknown[]; rowCount: number; queryRunId?: string };
+      expect(result.answer).toMatch(/指標|銷售額|銷售量/iu);
+      expect(result.rows).toEqual([]);
+      expect(result.rowCount).toBe(0);
+      expect(result).not.toHaveProperty("queryRunId");
+    } finally {
+      await expectOk(await api.delete(absoluteUrl(`/api/v1/sessions/${sessionId}`)), "remove C05 fixture session");
+    }
+  });
+
+  test("PX-AI-01B1 C10 follow-up replays tools and runs a fresh top-two governed query", async ({ page }) => {
+    test.skip(!allowMutatingE2E, "This deterministic conversation test writes to the isolated local D1 fixture.");
+    const api = page.context().request;
+    await loginApi(api);
+    const created = await api.post(absoluteUrl("/api/v1/sessions"), { data: { title: "PX-AI-01B1 C10 multi-turn" } });
+    await expectOk(created, "create C10 fixture session");
+    const sessionId = (await created.json() as { session: { id: string } }).session.id;
+    try {
+      const first = await api.post(absoluteUrl("/api/v1/chat"), { data: { sessionId, prompt: "請依商品列出銷售額" } });
+      await expectOk(first, "C10 first turn");
+      const firstResult = await first.json() as { rows: unknown[]; rowCount: number; queryRunId?: string };
+      expect(firstResult.rowCount).toBe(3);
+      expect(firstResult.queryRunId).toBeTruthy();
+
+      const followUp = await api.post(absoluteUrl("/api/v1/chat"), { data: { sessionId, prompt: "那只看最高的兩個" } });
+      await expectOk(followUp, "C10 follow-up turn");
+      const secondResult = await followUp.json() as { rows: unknown[]; rowCount: number; queryRunId?: string; explainability?: { explanation?: { sql?: string } } };
+      expect(secondResult.rowCount).toBe(2);
+      expect(secondResult.rows).toHaveLength(2);
+      expect(secondResult.queryRunId).toBeTruthy();
+      expect(secondResult.queryRunId).not.toBe(firstResult.queryRunId);
+      expect(secondResult.explainability?.explanation?.sql).toMatch(/LIMIT\s+2/iu);
+
+      const history = await api.get(absoluteUrl(`/api/v1/sessions/${sessionId}/messages`));
+      await expectOk(history, "load C10 session history");
+      const messages = (await history.json() as { messages: Array<{ metadata_json: string }> }).messages;
+      for (const message of messages) expect(JSON.parse(message.metadata_json)).not.toHaveProperty("agentContext");
+    } finally {
+      await expectOk(await api.delete(absoluteUrl(`/api/v1/sessions/${sessionId}`)), "remove C10 fixture session");
+    }
   });
 
   test("empty verified SQL stays hidden and result headers remain separate table cells", async ({ page }) => {
