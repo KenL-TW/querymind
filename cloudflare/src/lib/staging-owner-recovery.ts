@@ -48,6 +48,28 @@ export interface WranglerD1ImportResult {
   results?: Array<Record<string, unknown>>;
 }
 
+export function stagingOwnerRecordsFromWranglerQuery(entries: readonly WranglerD1ImportResult[]): StagingOwnerRecord[] {
+  if (entries.length !== 1) throw new StagingOwnerRecoveryError("D1_RESPONSE_INVALID");
+  const [entry] = entries;
+  if (entry.success !== true || !Array.isArray(entry.results)) throw new StagingOwnerRecoveryError("D1_RESPONSE_INVALID");
+  return entry.results.map((row) => {
+    if (typeof row.id !== "string"
+      || typeof row.email !== "string"
+      || typeof row.role_name !== "string"
+      || (typeof row.is_active !== "number" && typeof row.is_active !== "string")
+      || (row.password_updated_at !== null && typeof row.password_updated_at !== "string")) {
+      throw new StagingOwnerRecoveryError("D1_RESPONSE_INVALID");
+    }
+    return {
+      id: row.id,
+      email: row.email,
+      role_name: row.role_name,
+      is_active: Number(row.is_active),
+      password_updated_at: row.password_updated_at,
+    };
+  });
+}
+
 export interface StagingRecoveryInput {
   environment: string;
   databaseId: string;

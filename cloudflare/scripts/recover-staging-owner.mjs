@@ -37,6 +37,7 @@ const {
   recoveryWriteCountsFromWranglerImport,
   recoverExistingStagingOwner,
   safeRecoveryMessage,
+  stagingOwnerRecordsFromWranglerQuery,
 } = require("../src/lib/staging-owner-recovery.ts");
 const { validateEmail } = require("../src/lib/auth.ts");
 
@@ -85,23 +86,28 @@ function writeTemporarySql(sql) {
   return filePath;
 }
 
-function executeSql(sql) {
+function runRemoteD1(args) {
+  const result = spawnSync(process.execPath, [
+    wranglerPath,
+    "d1", "execute", STAGING_OWNER_RECOVERY_TARGET.databaseName,
+    "--remote", "--json", "--config", configPath,
+    ...args,
+  ], {
+    cwd: cloudflareDirectory,
+    encoding: "utf8",
+    maxBuffer: 1024 * 1024,
+    timeout: 60_000,
+    windowsHide: true,
+    env: process.env,
+  });
+  if (result.error || result.status !== 0) throw new Error("D1_EXECUTION_FAILED");
+  return queryResults(result.stdout ?? "");
+}
+
+function executeSqlFile(sql) {
   const sqlPath = writeTemporarySql(sql);
   try {
-    const result = spawnSync(process.execPath, [
-      wranglerPath,
-      "d1", "execute", STAGING_OWNER_RECOVERY_TARGET.databaseName,
-      "--remote", "--json", "--config", configPath, "--file", sqlPath,
-    ], {
-      cwd: cloudflareDirectory,
-      encoding: "utf8",
-      maxBuffer: 1024 * 1024,
-      timeout: 60_000,
-      windowsHide: true,
-      env: process.env,
-    });
-    if (result.error || result.status !== 0) throw new Error("D1_EXECUTION_FAILED");
-    return queryResults(result.stdout ?? "");
+    return runRemoteD1(["--file", sqlPath]);
   } catch {
     // Never forward Wrangler output: errors can contain SQL or credential hashes.
     throw new Error("STAGING_D1_OPERATION_FAILED");
@@ -110,20 +116,23 @@ function executeSql(sql) {
   }
 }
 
+function executeReadQuery(sql) {
+  try {
+    return runRemoteD1(["--command", sql]);
+  } catch {
+    throw new Error("STAGING_D1_OPERATION_FAILED");
+  }
+}
+
 function createDatabaseAdapter() {
   return {
     async findUsersByEmail(email) {
       const escapedEmail = email.replaceAll("'", "''");
       const sql = `SELECT id, email, role_name, is_active, password_updated_at FROM users WHERE email = '${escapedEmail}' COLLATE NOCASE;`;
-      const entries = executeSql(sql);
-      return entries.flatMap((entry) => Array.isArray(entry.results) ? entry.results : []).map((user) => ({
-        ...user,
-        is_active: Number(user.is_active),
-        password_updated_at: user.password_updated_at ?? null,
-      }));
+      return stagingOwnerRecordsFromWranglerQuery(executeReadQuery(sql));
     },
     async applyRecovery(write) {
-      const entries = executeSql(buildStagingRecoverySql(write));
+      const entries = executeSqlFile(buildStagingRecoverySql(write));
       return recoveryWriteCountsFromWranglerImport(entries);
     },
   };

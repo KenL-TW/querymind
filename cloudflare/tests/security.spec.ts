@@ -27,6 +27,7 @@ import {
   recoveryWriteCountsFromWranglerImport,
   recoverExistingStagingOwner,
   safeRecoveryMessage,
+  stagingOwnerRecordsFromWranglerQuery,
 } from "../src/lib/staging-owner-recovery";
 
 const sensitivePolicies: ColumnPolicy[] = [
@@ -758,5 +759,25 @@ test.describe("staging-only Owner break-glass recovery", () => {
     ]) {
       expect(recoveryWriteCountsFromWranglerImport(entries)).toEqual({ updateChanges: 0, auditChanges: 0 });
     }
+  });
+
+  test("parses Owner rows from Wrangler command queries and rejects import summaries", () => {
+    expect(stagingOwnerRecordsFromWranglerQuery([{
+      success: true,
+      results: [{
+        id: owner.id,
+        email: owner.email,
+        role_name: "owner",
+        is_active: 1,
+        password_updated_at: owner.password_updated_at,
+      }],
+    }])).toEqual([owner]);
+    expect(stagingOwnerRecordsFromWranglerQuery([{ success: true, results: [] }])).toEqual([]);
+    expect(() => stagingOwnerRecordsFromWranglerQuery([{
+      success: true,
+      results: [{ "Total queries executed": 1, "Rows read": 1, "Rows written": 0 }],
+      meta: { rows_written: 0 },
+    }])).toThrow(/D1_RESPONSE_INVALID/u);
+    expect(() => stagingOwnerRecordsFromWranglerQuery([{ success: false, results: [] }])).toThrow(/D1_RESPONSE_INVALID/u);
   });
 });
