@@ -133,6 +133,18 @@ export async function createPasswordRecord(password: string, env: Env): Promise<
   return { salt, hash: await deriveSlowPepperedPasswordHash(password, salt, env.AUTH_PASSWORD_PEPPER), algorithm: ACTIVE_PASSWORD_ALGORITHM };
 }
 
+/**
+ * Creates the already-supported legacy credential format for the offline
+ * Staging break-glass CLI. loginUser upgrades non-active formats to the
+ * current peppered format before issuing a session. This is intentionally not
+ * exposed through an HTTP route.
+ */
+export async function createStagingRecoveryPasswordRecord(password: string): Promise<{ salt: string; hash: string; algorithm: string }> {
+  const validatedPassword = validatePassword(password);
+  const salt = base64UrlEncode(crypto.getRandomValues(new Uint8Array(16)));
+  return { salt, hash: await derivePasswordHash(validatedPassword, salt), algorithm: "pbkdf2-sha256-100000" };
+}
+
 export async function passwordMatches(password: string, salt: string, expectedHash: string, algorithm: string, env: Env): Promise<boolean> {
   let actual: string;
   if ((algorithm === ACTIVE_PASSWORD_ALGORITHM || algorithm === "pbkdf2-sha256-100000-peppered-v1" || algorithm === "hmac-sha256-v1") && !env.AUTH_PASSWORD_PEPPER) {

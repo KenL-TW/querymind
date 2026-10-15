@@ -2,6 +2,7 @@ import { expect, test } from "playwright/test";
 import { validGatewayUrl } from "../src/lib/ai-config";
 import {
   createPasswordRecord,
+  createStagingRecoveryPasswordRecord,
   createSessionToken,
   loginUser,
   passwordMatches,
@@ -19,6 +20,14 @@ import { type EffectiveScope } from "../src/lib/scope";
 import { assertStaticRuntimeConfiguration } from "../src/lib/runtime-config";
 import { errorResponse, HttpError } from "../src/lib/http";
 import { completeWithAiProvider } from "../src/lib/ai-provider";
+import {
+  assertStagingRecoveryTarget,
+  buildStagingRecoverySql,
+  parseRecoveryArgs,
+  recoveryWriteCountsFromWranglerImport,
+  recoverExistingStagingOwner,
+  safeRecoveryMessage,
+} from "../src/lib/staging-owner-recovery";
 
 const sensitivePolicies: ColumnPolicy[] = [
   { table_name: "customers", column_name: "email", mask_mode: "full" },
@@ -614,4 +623,140 @@ test.describe("AI Gateway URL allowlist", () => {
   ]) {
     test(`rejects gateway URL: ${url}`, () => expect(validGatewayUrl(url)).toBe(false));
   }
+});
+
+test.describe("staging-only Owner break-glass recovery", () => {
+  const password = "staging-recovery-test-password-2026";
+  const owner = {
+    id: "b9d8d04a-a5fb-4267-8dad-57815a26f41d",
+    email: "staging-owner@example.test",
+    role_name: "owner",
+    is_active: 1,
+    password_updated_at: "2026-10-15T10:00:00.000Z",
+  };
+  const target = {
+    environment: "staging",
+    databaseId: "b5773b44-2fa2-48e8-84f6-ec838eecdf91",
+    databaseName: "querymind-staging-app",
+    email: owner.email,
+    password,
+    confirmed: true,
+    now: new Date("2026-10-15T10:00:00.000Z"),
+  };
+
+  test("accepts only explicit Staging recovery arguments and rejects password CLI flags", () => {
+    expect(parseRecoveryArgs([
+      "--environment", "staging",
+      "--database-id", "b5773b44-2fa2-48e8-84f6-ec838eecdf91",
+      "--email", owner.email,
+      "--confirm-recovery",
+    ])).toMatchObject({ environment: "staging", databaseId: "b5773b44-2fa2-48e8-84f6-ec838eecdf91", email: owner.email, confirmed: true });
+    expect(() => parseRecoveryArgs(["--environment", "staging", "--password", password])).toThrow(/UNSUPPORTED_ARGUMENT/u);
+  });
+
+  test("rejects Production and every non-exact database target", () => {
+    for (const target of [
+      ["production", "31aa9906-6ced-4a9c-9b46-1af029e3271f", "querymind-app"],
+      ["staging", "31aa9906-6ced-4a9c-9b46-1af029e3271f", "querymind-app"],
+      ["staging", "wrong-database-id", "querymind-staging-app"],
+      ["staging", "b5773b44-2fa2-48e8-84f6-ec838eecdf91", "querymind-app"],
+    ]) {
+      expect(() => assertStagingRecoveryTarget(target[0], target[1], target[2])).toThrow();
+    }
+  });
+
+  test("updates only an existing active Owner, records audit, and returns no credential material", async () => {
+    const writes: Array<{ user: typeof owner; credential: { salt: string; hash: string; algorithm: string }; passwordUpdatedAt: string; correlationId: string }> = [];
+    const result = await recoverExistingStagingOwner(target, {
+      findUsersByEmail: async () => [owner],
+      applyRecovery: async (write) => {
+        writes.push(write);
+        return { updateChanges: 1, auditChanges: 1 };
+      },
+    });
+    expect(result).toMatchObject({ userId: owner.id, email: owner.email, sessionsInvalidated: true, auditRecorded: true, algorithm: "pbkdf2-sha256-100000" });
+    expect(Date.parse(result.passwordUpdatedAt)).toBe(Date.parse(owner.password_updated_at!) + 1);
+    expect(result).not.toHaveProperty("password");
+    expect(result).not.toHaveProperty("hash");
+    expect(writes).toHaveLength(1);
+    const write = writes[0];
+    await expect(passwordMatches(password, write.credential.salt, write.credential.hash, write.credential.algorithm, {} as Env)).resolves.toBe(true);
+    const sql = buildStagingRecoverySql(write);
+    expect(sql).toContain("SET password_salt =");
+    expect(sql).toContain("STAGING_OWNER_RECOVERY");
+    expect(sql).not.toContain("SET role_name");
+    expect(sql).not.toContain("data_scope_key =");
+    expect(sql).not.toContain(password);
+    const summary = safeRecoveryMessage(result);
+    expect(summary).not.toContain(password);
+    expect(summary).not.toContain(write.credential.hash);
+  });
+
+  for (const denied of [
+    { label: "unknown user", rows: [], code: "STAGING_OWNER_NOT_FOUND" },
+    { label: "non-Owner user", rows: [{ ...owner, role_name: "viewer" }], code: "TARGET_USER_NOT_OWNER" },
+    { label: "inactive Owner", rows: [{ ...owner, is_active: 0 }], code: "TARGET_OWNER_INACTIVE" },
+  ]) {
+    test(`rejects ${denied.label} without writing`, async () => {
+      let writes = 0;
+      await expect(recoverExistingStagingOwner(target, {
+        findUsersByEmail: async () => denied.rows,
+        applyRecovery: async () => { writes += 1; return { updateChanges: 1, auditChanges: 1 }; },
+      })).rejects.toMatchObject({ code: denied.code });
+      expect(writes).toBe(0);
+    });
+  }
+
+  test("recovery credential is upgraded to the active peppered format by normal login", async () => {
+    const credential = await createStagingRecoveryPasswordRecord(password);
+    let upgraded: unknown[] | null = null;
+    const database = {
+      prepare(sql: string) {
+        if (sql.includes("FROM users WHERE email")) return statement(sql, { first: () => ({
+          id: owner.id,
+          email: owner.email,
+          display_name: "Staging Owner",
+          password_salt: credential.salt,
+          password_hash: credential.hash,
+          password_algorithm: credential.algorithm,
+          password_updated_at: "2026-10-15T10:00:00.001Z",
+          role_name: "owner",
+          is_active: 1,
+        }) });
+        if (sql.includes("UPDATE users SET password_salt")) return statement(sql, { run: (values) => { upgraded = values; return { meta: { changes: 1 } }; } });
+        if (sql.includes("FROM role_definitions")) return statement(sql, { first: () => ({ role_name: "owner", capabilities_json: '["*"]', max_rows_per_query: 10_000 }) });
+        throw new Error(`Unexpected recovery-login query: ${sql}`);
+      },
+    };
+    const loggedIn = await loginUser({
+      AUTH_PASSWORD_PEPPER: "staging-recovery-unit-test-pepper",
+      QUERYMIND_APP: database,
+    } as unknown as Env, owner.email, password);
+    expect(upgraded).not.toBeNull();
+    expect(upgraded![2]).toBe("pbkdf2-sha256-10000-peppered-v1");
+    expect(loggedIn.passwordUpdatedAt).toBe(upgraded![3]);
+    await expect(passwordMatches(password, String(upgraded![0]), String(upgraded![1]), String(upgraded![2]), {
+      AUTH_PASSWORD_PEPPER: "staging-recovery-unit-test-pepper",
+    } as unknown as Env)).resolves.toBe(true);
+  });
+
+  test("accepts Wrangler remote file-import summary only when both guarded writes succeeded", () => {
+    expect(recoveryWriteCountsFromWranglerImport([{
+      success: true,
+      results: [{ "Total queries executed": 2 }],
+      meta: { rows_written: 2 },
+    }])).toEqual({ updateChanges: 1, auditChanges: 1 });
+    for (const entries of [
+      [],
+      [{ success: false, results: [{ "Total queries executed": 2 }], meta: { rows_written: 2 } }],
+      [{ success: true, results: [{ "Total queries executed": 2 }], meta: { rows_written: 1 } }],
+      [{ success: true, results: [{ "Total queries executed": 1 }], meta: { rows_written: 2 } }],
+      [
+        { success: true, results: [{ "Total queries executed": 2 }], meta: { rows_written: 2 } },
+        { success: true, results: [{ "Total queries executed": 2 }], meta: { rows_written: 2 } },
+      ],
+    ]) {
+      expect(recoveryWriteCountsFromWranglerImport(entries)).toEqual({ updateChanges: 0, auditChanges: 0 });
+    }
+  });
 });
