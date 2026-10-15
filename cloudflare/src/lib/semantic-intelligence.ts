@@ -1,6 +1,7 @@
-import { gatewayConfigured, gatewayHeaders } from "./ai-config";
+import { resolveAiProvider, type AiProviderId } from "./ai-config";
+import { completeWithAiProvider } from "./ai-provider";
 import { redactModelText } from "./dlp";
-import { HttpError, readResponseJson } from "./http";
+import { HttpError } from "./http";
 import { hashSubject } from "./rate-limit";
 import { type AuthorizedCatalogForeignKey } from "./schema-catalog";
 import { extractSemanticCandidates, SEMANTIC_INTELLIGENCE_LIMITS, type SelectedSuggestionCatalog, type SemanticCandidate } from "./semantic-intelligence-candidates";
@@ -25,6 +26,7 @@ export interface GeneratedSuggestion {
 export interface SuggestionGenerationResult {
   suggestions: GeneratedSuggestion[];
   attempts: number;
+  providerId: AiProviderId;
   model: string;
   promptFingerprint: string;
   modelConfigFingerprint: string;
@@ -32,6 +34,7 @@ export interface SuggestionGenerationResult {
 }
 
 export interface SuggestionGenerationPlan {
+  providerId: AiProviderId;
   model: string;
   candidates: SemanticCandidate[];
   modelInput: Record<string, unknown>;
@@ -203,12 +206,6 @@ export function buildSuggestionModelInput(catalog: SelectedSuggestionCatalog, ca
   return input;
 }
 
-function selectedModel(env: Env): string {
-  const allowed = env.ALLOWED_OPENAI_MODELS.split(",").map((model) => model.trim()).filter(Boolean);
-  if (!allowed.includes(env.OPENAI_MODEL)) throw new HttpError(503, "AI_MODEL_NOT_ALLOWED", "Configured OpenAI model is not in the allowlist.");
-  return env.OPENAI_MODEL;
-}
-
 function modelSystemPrompt(): string {
   return [
     "You produce governed, design-time semantic draft suggestions for QueryMind.",
@@ -259,37 +256,35 @@ function mockSuggestions(catalog: SelectedSuggestionCatalog, candidates: Semanti
   return { suggestions };
 }
 
-async function providerResponse(env: Env, userId: string, runId: string, model: string, modelInput: Record<string, unknown>, catalog: SelectedSuggestionCatalog, candidates: SemanticCandidate[], maximum: number, signal: AbortSignal): Promise<unknown> {
+async function providerResponse(env: Env, model: string, modelInput: Record<string, unknown>, catalog: SelectedSuggestionCatalog, candidates: SemanticCandidate[], maximum: number, signal: AbortSignal): Promise<unknown> {
   if (env.ENVIRONMENT !== "production" && env.AI_MOCK_MODE === "true") return mockSuggestions(catalog, candidates, maximum);
-  if (!gatewayConfigured(env)) throw new HttpError(503, "AI_NOT_CONFIGURED", "AI Gateway is not configured yet.");
   try {
-    const response = await fetch(env.AI_GATEWAY_URL, {
-      method: "POST",
-      headers: gatewayHeaders(env, userId, `semantic-suggestion:${runId}`),
-      signal: AbortSignal.any([signal, AbortSignal.timeout(30_000)]),
-      body: JSON.stringify({ model, temperature: 0, max_completion_tokens: 3000, response_format: { type: "json_object" }, messages: [{ role: "system", content: modelSystemPrompt() }, { role: "user", content: JSON.stringify(modelInput) }] }),
+    const completion = await completeWithAiProvider(env, {
+      model,
+      temperature: 0,
+      maxOutputTokens: 3000,
+      responseFormat: "json_object",
+      messages: [{ role: "system", content: modelSystemPrompt() }, { role: "user", content: JSON.stringify(modelInput) }],
+      signal,
     });
-    if (!response.ok) throw new HttpError(response.status === 429 ? 429 : 502, "AI_GATEWAY_ERROR", "AI Gateway request failed.");
-    const value = await readResponseJson(response) as { choices?: Array<{ message?: { content?: string | null } }> };
-    const content = value.choices?.[0]?.message?.content;
-    if (!content) throw new HttpError(502, "SUGGESTION_OUTPUT_INVALID", "AI Gateway did not return structured suggestions.");
+    const content = completion.content;
+    if (!content) throw new HttpError(502, "SUGGESTION_OUTPUT_INVALID", "AI provider did not return structured suggestions.");
     return JSON.parse(content) as unknown;
   } catch (error) {
     if (error instanceof HttpError) throw error;
     if (signal.aborted) throw new HttpError(499, "CLIENT_CLOSED_REQUEST", "The client disconnected before the AI request completed.");
-    if (error instanceof DOMException && (error.name === "TimeoutError" || error.name === "AbortError")) throw new HttpError(504, "AI_GATEWAY_TIMEOUT", "AI Gateway did not respond within 30 seconds.");
-    if (error instanceof SyntaxError) throw new HttpError(502, "SUGGESTION_OUTPUT_INVALID", "AI Gateway returned invalid structured suggestions.");
-    throw new HttpError(502, "AI_GATEWAY_ERROR", "AI Gateway request failed.");
+    if (error instanceof SyntaxError) throw new HttpError(502, "SUGGESTION_OUTPUT_INVALID", "AI provider returned invalid structured suggestions.");
+    throw new HttpError(502, "AI_PROVIDER_UPSTREAM", "AI provider request failed.");
   }
 }
 
 function retryable(error: unknown): boolean {
-  return error instanceof HttpError && ["AI_GATEWAY_ERROR", "AI_GATEWAY_TIMEOUT", "SUGGESTION_OUTPUT_INVALID"].includes(error.code);
+  return error instanceof HttpError && ["AI_PROVIDER_RATE_LIMIT", "AI_PROVIDER_QUOTA", "AI_PROVIDER_TIMEOUT", "AI_PROVIDER_UPSTREAM", "AI_PROVIDER_INVALID_RESPONSE", "SUGGESTION_OUTPUT_INVALID"].includes(error.code);
 }
 
 /** Build and budget the deterministic model input before a run is persisted. */
 export async function prepareSuggestionGeneration(env: Env, catalog: SelectedSuggestionCatalog, requestedTypes: SemanticAssetType[], maximum: number): Promise<SuggestionGenerationPlan> {
-  const model = selectedModel(env);
+  const { providerId, model } = resolveAiProvider(env);
   const allCandidates = extractSemanticCandidates(catalog, requestedTypes);
   // Keep a varied, deterministic cross-type sample. Candidate records repeat
   // structural references for auditability, so sending every heuristic match
@@ -312,20 +307,20 @@ export async function prepareSuggestionGeneration(env: Env, catalog: SelectedSug
   if (serialized.length > maximumPrompt) throw new HttpError(413, "SUGGESTION_PROMPT_TOO_LARGE", "Selected schema metadata exceeds the AI request budget.");
   const [promptFingerprint, modelConfigFingerprint, catalogFingerprint] = await Promise.all([
     fingerprint({ promptVersion: SEMANTIC_SUGGESTION_PROMPT_VERSION, system: modelSystemPrompt() }),
-    fingerprint({ model, temperature: 0, maxCompletionTokens: 3000, responseFormat: "json_object" }),
+    fingerprint({ providerId, model, temperature: 0, maxCompletionTokens: 3000, responseFormat: "json_object" }),
     fingerprint({ schemaSnapshotId: catalog.schemaSnapshotId, tables: modelInput.tables, foreignKeys: modelInput.foreignKeys }),
   ]);
-  return { model, candidates, modelInput, promptFingerprint, modelConfigFingerprint, catalogFingerprint };
+  return { providerId, model, candidates, modelInput, promptFingerprint, modelConfigFingerprint, catalogFingerprint };
 }
 
 export async function generateSuggestionOutput(env: Env, input: { userId: string; runId: string; catalog: SelectedSuggestionCatalog; maximum: number; signal: AbortSignal; plan: SuggestionGenerationPlan }): Promise<SuggestionGenerationResult> {
-  const { model, candidates, modelInput, promptFingerprint, modelConfigFingerprint, catalogFingerprint } = input.plan;
+  const { providerId, model, candidates, modelInput, promptFingerprint, modelConfigFingerprint, catalogFingerprint } = input.plan;
   let lastError: unknown;
   for (let attempt = 1; attempt <= 2; attempt += 1) {
     try {
-      const raw = await providerResponse(env, input.userId, input.runId, model, modelInput, input.catalog, candidates, input.maximum, input.signal);
+      const raw = await providerResponse(env, model, modelInput, input.catalog, candidates, input.maximum, input.signal);
       const suggestions = await validateSuggestionModelOutput(raw, input.catalog, candidates, input.maximum);
-      return { suggestions, attempts: attempt, model, promptFingerprint, modelConfigFingerprint, catalogFingerprint };
+      return { suggestions, attempts: attempt, providerId, model, promptFingerprint, modelConfigFingerprint, catalogFingerprint };
     } catch (error) {
       lastError = error;
       if (error && typeof error === "object") Object.assign(error, { suggestionAttempts: attempt });

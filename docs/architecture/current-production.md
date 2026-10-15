@@ -24,6 +24,8 @@ flowchart TD
 
 The Worker authenticates the request and applies feature RBAC. It resolves EffectiveScope before it builds an authorized catalog for model context or SQL authorization. The LLM is an egress dependency through AI Gateway only; its output is untrusted. QueryPolicyEngine is the single read-only execution authorization boundary for chat, direct query, saved insight, and export. DLP and result bounds remain enforced before data returns to the SPA.
 
+The repository now contains an un-deployed PX-AI-01 provider abstraction and a Workers AI adapter for chat and semantic suggestions. This is not yet part of the Production runtime: `wrangler.production.jsonc` dry-run lists no `AI` binding, and no Production deployment/provider switch was made. Production continues on the existing OpenAI Gateway/BYOK path until a separately approved Cloudflare release. See [PX-AI-01 implementation and verification](../product/px-ai-01-multi-provider-runtime.md).
+
 ## Design-time branch
 
 Semantic Registry and P2-D AI Suggestions live in `QUERYMIND_APP`. Suggestions receive only an authorized, selected catalog and are validated before they can become a human-owned **DRAFT**. No semantic approval or runtime semantic consumption is enabled in this phase. `registry_version` is currently `0`.

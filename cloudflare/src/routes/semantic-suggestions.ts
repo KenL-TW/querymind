@@ -124,7 +124,7 @@ export async function generateSemanticSuggestions(request: Request, env: Env): P
       catalogFingerprint: plan.catalogFingerprint,
       promptVersion: SEMANTIC_SUGGESTION_PROMPT_VERSION,
       promptFingerprint: plan.promptFingerprint,
-      provider: "cloudflare-ai-gateway-openai-byok",
+      provider: plan.providerId,
       model: plan.model,
       modelConfigFingerprint: plan.modelConfigFingerprint,
     });

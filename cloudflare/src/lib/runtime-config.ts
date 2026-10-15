@@ -1,4 +1,4 @@
-import { gatewayConfigured } from "./ai-config";
+import { aiProviderConfigured, resolveAiProvider } from "./ai-config";
 import { HttpError } from "./http";
 
 /** Static production invariants. This intentionally runs before any local auth fallback. */
@@ -10,5 +10,9 @@ export function assertStaticRuntimeConfiguration(env: Env): void {
   if (!env.AUTH_JWT_SECRET || !env.AUTH_PASSWORD_PEPPER || !env.AUTH_BOOTSTRAP_TOKEN) throw new HttpError(503, "AUTH_NOT_CONFIGURED", "Production authentication secrets are incomplete.");
   if (env.AI_MOCK_MODE === "true") throw new HttpError(503, "AI_MOCK_MODE_FORBIDDEN", "AI mock mode must be disabled in production.");
   if (env.AI_MOCK_MODE !== "false") throw new HttpError(503, "AI_MOCK_MODE_CONFIG", "AI_MOCK_MODE must be explicitly false in production.");
-  if (!gatewayConfigured(env)) throw new HttpError(503, "AI_GATEWAY_NOT_CONFIGURED", "AI Gateway configuration is incomplete.");
+  const provider = resolveAiProvider(env);
+  if (!aiProviderConfigured(env)) {
+    if (provider.providerId === "openai_gateway") throw new HttpError(503, "AI_GATEWAY_NOT_CONFIGURED", "AI Gateway configuration is incomplete.");
+    throw new HttpError(503, "AI_PROVIDER_CONFIG", "Workers AI binding configuration is incomplete.");
+  }
 }

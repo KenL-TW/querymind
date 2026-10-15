@@ -18,7 +18,7 @@ QueryMind is a governed AI data-query application. Production is the Cloudflare 
 | P2-G semantic evidence hook | `explainability.ts`, `approved-semantic-context.ts`, P2-G SDD/release/manifest |
 | P2-H runtime activation readiness | `semantic-runtime-readiness.ts`, `routes/semantic-runtime-readiness.ts`, P2-H SDD/release/manifest |
 | P2-D suggestions | `semantic-intelligence*.ts`, `semantic-suggestion-*.ts`, `routes/semantic-suggestions.ts` |
-| AI configuration | `ai-config.ts`, `runtime-config.ts`, `production-runtime-contract.json` |
+| AI configuration and providers | `ai-config.ts`, `ai-provider.ts`, `runtime-config.ts`, `production-runtime-contract.json` |
 | Tests | `cloudflare/tests/*.spec.ts` |
 | Deployment and rollback | `cloudflare/PRODUCTION_RUNBOOK.md` |
 
@@ -37,6 +37,7 @@ QueryMind is a governed AI data-query application. Production is the Cloudflare 
 - P1.2 release evidence: [Feedback & Trust manifest](releases/manifests/p1.2-feedback-trust.json)
 - Release-quality closeout: [P2-E production release and authenticated closeout](releases/p2-e-human-semantic-approval-publication.md)
 - P2-F production evidence: [Approved runtime semantic context](releases/p2-f-approved-runtime-semantic-context.md)
+- PX-AI-01 provider abstraction/Workers AI adapter is implemented locally but **not deployed**. Production remains on OpenAI Gateway/BYOK; the production-config dry-run has no Workers AI binding. Local provider compatibility mocks pass, while live Workers AI and full local D1/E2E verification remain unverified due a local `workerd` runtime crash. See [PX-AI-01 verification](product/px-ai-01-multi-provider-runtime.md).
 
 P1.2 feedback is a query-run-linked capture boundary. It validates evidence
 targets against persisted Explainability, preserves owner-only successful-run

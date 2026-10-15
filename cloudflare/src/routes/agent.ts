@@ -1,7 +1,8 @@
-import { gatewayConfigured, gatewayHeaders } from "../lib/ai-config";
+import { resolveAiProvider, type AiProviderId } from "../lib/ai-config";
+import { completeWithAiProvider, type ProviderCompletion, type ProviderMessage, type ProviderTool, type ProviderToolCall, type ProviderTrace } from "../lib/ai-provider";
 import { hasCapability, requireCapability, requireUser, type AuthenticatedUser } from "../lib/auth";
 import { assertNoSensitiveInference, maskedQueryRows, redactModelText } from "../lib/dlp";
-import { HttpError, json, readJson, readResponseJson } from "../lib/http";
+import { HttpError, json, readJson } from "../lib/http";
 import { consumeRateLimit, hashSubject } from "../lib/rate-limit";
 import { authorizedCatalogContext, authorizedSchemaCatalog } from "../lib/schema-catalog";
 import { resolveApprovedSemanticContext, type ResolvedSemanticContext } from "../lib/approved-semantic-context";
@@ -11,23 +12,7 @@ import { authorizeQuery } from "../lib/query-policy";
 import { resolveEffectiveScope, type EffectiveScope } from "../lib/scope";
 import { buildQueryExplainability, type QueryExplainability } from "../lib/explainability";
 
-interface ToolCall {
-  id: string;
-  type: "function";
-  function: { name: string; arguments: string };
-}
-
-interface ChatMessage {
-  role: "system" | "user" | "assistant" | "tool";
-  content: string | null;
-  tool_call_id?: string;
-  tool_calls?: ToolCall[];
-}
-
-interface CompletionMessage {
-  content?: string | null;
-  tool_calls?: ToolCall[];
-}
+type ChatMessage = ProviderMessage;
 
 interface PreparedChat {
   user: AuthenticatedUser;
@@ -36,6 +21,7 @@ interface PreparedChat {
   context: string;
   glossary: string;
   history: ChatMessage[];
+  providerId: AiProviderId;
   model: string;
   startedAt: number;
   signal: AbortSignal;
@@ -51,24 +37,33 @@ interface AgentResult {
   rows: Record<string, unknown>[];
   rowCount: number;
   maskedColumns: string[];
+  ai: AiRunMetadata;
   model: string;
   semanticResolution?: { status: "ASK"; code: string; candidates: Array<{ label: string; domain: string }> };
 }
 
-const RUN_SQL_TOOL = {
-  type: "function",
-  function: {
-    name: "run_readonly_sql",
-    description: "Run one read-only SQLite SELECT or WITH query against the QueryMind business database.",
-    strict: true,
-    parameters: {
-      type: "object",
-      additionalProperties: false,
-      properties: { sql: { type: "string", description: "A single SQLite SELECT or WITH statement without comments or semicolons." } },
-      required: ["sql"],
-    },
+interface AiRunMetadata {
+  providerId: AiProviderId;
+  model: string;
+  status: "success" | "mock" | "not_invoked";
+  requestedAt?: string;
+  completedAt?: string;
+  latencyMs: number;
+  references: string[];
+  tokenUsage?: { inputTokens: number; outputTokens: number; totalTokens: number };
+}
+
+const RUN_SQL_TOOL: ProviderTool = {
+  name: "run_readonly_sql",
+  description: "Run one read-only SQLite SELECT or WITH query against the QueryMind business database.",
+  strict: true,
+  parameters: {
+    type: "object",
+    additionalProperties: false,
+    properties: { sql: { type: "string", description: "A single SQLite SELECT or WITH statement without comments or semicolons." } },
+    required: ["sql"],
   },
-} as const;
+};
 
 function bodyObject(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new HttpError(400, "INVALID_REQUEST", "Request body must be a JSON object.");
@@ -78,12 +73,6 @@ function bodyObject(value: unknown): Record<string, unknown> {
 function requiredText(value: unknown, field: string, maximum: number): string {
   if (typeof value !== "string" || !value.trim() || value.length > maximum) throw new HttpError(400, "INVALID_REQUEST", `${field} must be a non-empty string up to ${maximum} characters.`);
   return value.trim();
-}
-
-function selectedModel(env: Env): string {
-  const allowed = env.ALLOWED_OPENAI_MODELS.split(",").map((model) => model.trim()).filter(Boolean);
-  if (!allowed.includes(env.OPENAI_MODEL)) throw new HttpError(503, "AI_MODEL_NOT_ALLOWED", "Configured OpenAI model is not in the allowlist.");
-  return env.OPENAI_MODEL;
 }
 
 function systemPrompt(context: string, glossary: string, semanticContext: string): string {
@@ -138,77 +127,62 @@ async function conversationHistory(env: Env, sessionId: string): Promise<ChatMes
   return rows.reverse().map((row) => ({ role: row.role, content: redactModelText(row.content.slice(0, 900)) }));
 }
 
-function mockCompletion(messages: ChatMessage[]): CompletionMessage {
+function mockCompletion(messages: ChatMessage[], providerId: AiProviderId, model: string): ProviderCompletion {
+  const now = new Date().toISOString();
+  const trace: ProviderTrace = { providerId, mode: "mock", model, referenceId: crypto.randomUUID(), requestedAt: now, completedAt: now, status: "mock", latencyMs: 0 };
   const last = messages.at(-1);
   if (last?.role === "tool") {
     const toolData = JSON.parse(last.content ?? "{}") as { rowCount?: number };
-    return { content: `查詢完成，共取得 ${toolData.rowCount ?? 0} 筆資料。以下結果已通過唯讀驗證與欄位遮罩。` };
+    return { content: `查詢完成，共取得 ${toolData.rowCount ?? 0} 筆資料。以下結果已通過唯讀驗證與欄位遮罩。`, toolCalls: [], trace };
   }
   const prompt = messages.slice().reverse().find((message) => message.role === "user")?.content ?? "";
   const sql = /銷售|營收|revenue|sales/iu.test(prompt)
     ? "SELECT p.name AS product_name, SUM(oi.subtotal) AS sales_amount FROM order_items oi JOIN orders o ON o.id = oi.order_id JOIN products p ON p.id = oi.product_id WHERE o.status <> 'cancelled' GROUP BY p.id, p.name ORDER BY sales_amount DESC"
     : "SELECT COUNT(*) AS order_count FROM orders WHERE status <> 'cancelled'";
-  return { content: null, tool_calls: [{ id: crypto.randomUUID(), type: "function", function: { name: "run_readonly_sql", arguments: JSON.stringify({ sql }) } }] };
+  return { content: null, toolCalls: [{ id: crypto.randomUUID(), name: "run_readonly_sql", arguments: JSON.stringify({ sql }) }], trace };
 }
 
-export async function gatewayCompletion(env: Env, model: string, messages: ChatMessage[], includeTool: boolean, userId: string, sessionId: string, requestSignal: AbortSignal): Promise<CompletionMessage> {
-  if (env.ENVIRONMENT !== "production" && env.AI_MOCK_MODE === "true") return mockCompletion(messages);
-  if (!gatewayConfigured(env)) throw new HttpError(503, "AI_NOT_CONFIGURED", "AI Gateway is not configured yet.");
-  const referenceId = crypto.randomUUID();
-  let response: Response;
-  try {
-    response = await fetch(env.AI_GATEWAY_URL, {
-      method: "POST",
-      headers: gatewayHeaders(env, userId, sessionId),
-      signal: AbortSignal.any([requestSignal, AbortSignal.timeout(30_000)]),
-      body: JSON.stringify({
-        model,
-        temperature: 0.1,
-        max_completion_tokens: 800,
-        messages,
-        ...(includeTool ? { tools: [RUN_SQL_TOOL], tool_choice: "auto", parallel_tool_calls: false } : {}),
-      }),
-    });
-  } catch (error) {
-    if (requestSignal.aborted) throw new HttpError(499, "CLIENT_CLOSED_REQUEST", "The client disconnected before the AI request completed.");
-    const timedOut = error instanceof DOMException && (error.name === "TimeoutError" || error.name === "AbortError");
-    console.error(JSON.stringify({
-      event: "ai_gateway.request_failed",
-      reference_id: referenceId,
-      failure_type: timedOut ? "timeout" : "network_error",
-      error_type: error instanceof DOMException ? error.name : error instanceof TypeError ? "TypeError" : error instanceof Error ? "Error" : "Unknown",
-      model,
-    }));
-    if (timedOut) throw new HttpError(504, "AI_GATEWAY_TIMEOUT", "AI Gateway did not respond within 30 seconds.", referenceId);
-    throw new HttpError(502, "AI_GATEWAY_ERROR", "AI Gateway request failed.", referenceId);
-  }
-  if (!response.ok) {
-    const rayId = response.headers.get("cf-ray");
-    console.error(JSON.stringify({
-      event: "ai_gateway.request_failed",
-      reference_id: referenceId,
-      failure_type: "http_response",
-      upstream_status: response.status,
-      ...(rayId && /^[A-Za-z0-9-]{1,80}$/u.test(rayId) ? { cloudflare_ray_id: rayId } : {}),
-      model,
-    }));
-    throw new HttpError(response.status === 429 ? 429 : 502, "AI_GATEWAY_ERROR", "AI Gateway request failed.", referenceId);
-  }
-  const value = await readResponseJson(response);
-  const message = (value as { choices?: Array<{ message?: CompletionMessage }> }).choices?.[0]?.message;
-  if (!message) throw new HttpError(502, "AI_INVALID_RESPONSE", "AI Gateway did not return a completion message.");
-  return message;
+async function chatCompletion(env: Env, model: string, providerId: AiProviderId, messages: ChatMessage[], includeTool: boolean, requestSignal: AbortSignal): Promise<ProviderCompletion> {
+  if (env.ENVIRONMENT !== "production" && env.AI_MOCK_MODE === "true") return mockCompletion(messages, providerId, model);
+  return completeWithAiProvider(env, {
+    model,
+    messages,
+    ...(includeTool ? { tools: [RUN_SQL_TOOL], toolChoice: "auto" as const } : {}),
+    temperature: 0.1,
+    maxOutputTokens: 800,
+    signal: requestSignal,
+  });
 }
 
-function toolSql(call: ToolCall): string {
-  if (call.type !== "function" || call.function.name !== "run_readonly_sql") throw new HttpError(502, "AI_INVALID_TOOL", "AI requested an unsupported tool.");
+function toolSql(call: ProviderToolCall): string {
+  if (call.name !== "run_readonly_sql") throw new HttpError(502, "AI_PROVIDER_INVALID_RESPONSE", "AI requested an unsupported tool.");
   try {
-    const value = JSON.parse(call.function.arguments) as { sql?: unknown };
+    const value = JSON.parse(call.arguments) as { sql?: unknown };
     if (typeof value.sql !== "string") throw new Error("sql is missing");
     return value.sql;
   } catch {
-    throw new HttpError(502, "AI_INVALID_TOOL", "AI tool arguments are invalid.");
+    throw new HttpError(502, "AI_PROVIDER_INVALID_RESPONSE", "AI tool arguments are invalid.");
   }
+}
+
+function aiRunMetadata(providerId: AiProviderId, model: string, traces: ProviderTrace[]): AiRunMetadata {
+  if (!traces.length) return { providerId, model, status: "not_invoked", latencyMs: 0, references: [] };
+  const ordered = [...traces].sort((left, right) => left.requestedAt.localeCompare(right.requestedAt));
+  const hasUsageForEveryCall = traces.every((trace) => trace.tokenUsage);
+  return {
+    providerId,
+    model,
+    status: traces.every((trace) => trace.mode === "mock") ? "mock" : "success",
+    requestedAt: ordered[0].requestedAt,
+    completedAt: ordered.at(-1)!.completedAt,
+    latencyMs: traces.reduce((total, trace) => total + trace.latencyMs, 0),
+    references: traces.map((trace) => trace.referenceId),
+    ...(hasUsageForEveryCall ? { tokenUsage: traces.reduce((total, trace) => ({
+      inputTokens: total.inputTokens + trace.tokenUsage!.inputTokens,
+      outputTokens: total.outputTokens + trace.tokenUsage!.outputTokens,
+      totalTokens: total.totalTokens + trace.tokenUsage!.totalTokens,
+    }), { inputTokens: 0, outputTokens: 0, totalTokens: 0 }) } : {}),
+  };
 }
 
 async function recordUsage(env: Env, prepared: PreparedChat, providerRequests: number, rowCount: number, status: "success" | "rejected" | "error", errorCode: string | null): Promise<void> {
@@ -223,13 +197,13 @@ async function persistSuccess(env: Env, prepared: PreparedChat, result: AgentRes
     env.QUERYMIND_APP.prepare("INSERT INTO chat_messages (id, session_id, role, content, metadata_json, created_at) VALUES (?, ?, 'user', ?, '{}', ?)").bind(crypto.randomUUID(), prepared.sessionId, prepared.prompt, now),
     // Keep a bounded, already-masked preview for session history. The full result
     // remains available only through a fresh validated query/export request.
-    env.QUERYMIND_APP.prepare("INSERT INTO chat_messages (id, session_id, role, content, metadata_json, created_at) VALUES (?, ?, 'assistant', ?, ?, ?)").bind(crypto.randomUUID(), prepared.sessionId, result.answer, JSON.stringify({ sql: result.sql || (governed ? "redacted" : undefined), rows: boundedResultPreview(result.rows), rowCount: result.rowCount, truncated: result.rows.length > MAX_STORED_PREVIEW_ROWS, maskedColumns: result.maskedColumns, model: result.model, ...(governed ? { queryRunId: governed.queryRunId, explainability: governed.explainability } : {}) }), now),
+    env.QUERYMIND_APP.prepare("INSERT INTO chat_messages (id, session_id, role, content, metadata_json, created_at) VALUES (?, ?, 'assistant', ?, ?, ?)").bind(crypto.randomUUID(), prepared.sessionId, result.answer, JSON.stringify({ sql: result.sql || (governed ? "redacted" : undefined), rows: boundedResultPreview(result.rows), rowCount: result.rowCount, truncated: result.rows.length > MAX_STORED_PREVIEW_ROWS, maskedColumns: result.maskedColumns, model: result.model, ai: result.ai, ...(governed ? { queryRunId: governed.queryRunId, explainability: governed.explainability } : {}) }), now),
     env.QUERYMIND_APP.prepare("UPDATE chat_sessions SET updated_at = ? WHERE id = ?").bind(now, prepared.sessionId),
     env.QUERYMIND_APP.prepare("INSERT INTO ai_usage_events (id, user_id, session_id, model, input_characters, provider_requests, row_count, status, duration_ms, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'success', ?, ?)").bind(crypto.randomUUID(), prepared.user.id, prepared.sessionId, prepared.model, prepared.prompt.length, providerRequests, result.rowCount, Date.now() - prepared.startedAt, now),
   ];
   if (governed) {
     statements.push(env.QUERYMIND_APP.prepare("INSERT INTO query_runs (id, session_id, user_id, prompt, generated_sql, validated_sql, row_count, duration_ms, outcome, explainability_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'success', ?, ?)").bind(governed.queryRunId, prepared.sessionId, prepared.user.id, prepared.prompt, governed.sql, governed.sql, result.rowCount, Date.now() - prepared.startedAt, JSON.stringify(governed.explainability), now));
-    statements.push(env.QUERYMIND_APP.prepare("INSERT INTO audit_events (id, actor_id, event_type, resource_type, resource_id, metadata_json, created_at) VALUES (?, ?, 'agent.query.executed', 'query_run', ?, ?, ?)").bind(crypto.randomUUID(), prepared.user.id, governed.queryRunId, JSON.stringify({ model: prepared.model, rowCount: result.rowCount }), now));
+    statements.push(env.QUERYMIND_APP.prepare("INSERT INTO audit_events (id, actor_id, event_type, resource_type, resource_id, metadata_json, created_at) VALUES (?, ?, 'agent.query.executed', 'query_run', ?, ?, ?)").bind(crypto.randomUUID(), prepared.user.id, governed.queryRunId, JSON.stringify({ model: prepared.model, providerId: result.ai.providerId, providerReferences: result.ai.references, latencyMs: result.ai.latencyMs, tokenUsage: result.ai.tokenUsage, rowCount: result.rowCount }), now));
   }
   await env.QUERYMIND_APP.batch(statements);
 }
@@ -257,16 +231,18 @@ async function prepareChat(request: Request, env: Env): Promise<PreparedChat> {
     console.log(JSON.stringify({ event: "semantic_context.resolved", contract: "p2-f-v1", status: semanticContext.status, code: semanticContext.code, registryVersion: semanticContext.registryVersion, schemaSnapshotId: semanticContext.schemaSnapshotId, candidateCount: semanticContext.candidateCount, selectedCount: semanticContext.selected.length, ambiguityCount: semanticContext.candidates.length, excludedCount: semanticContext.excludedCount, serializedBytes: semanticContext.serializedBytes, fallbackToP1: semanticContext.fallbackToP1, latencyMs: semanticContext.latencyMs }));
   }
   const [glossary, history] = await Promise.all([businessGlossary(env, scope), conversationHistory(env, sessionId)]);
-  return { user, sessionId, prompt, context: authorizedCatalogContext(catalog), glossary, history, model: selectedModel(env), startedAt: Date.now(), signal: request.signal, scope, semanticContext };
+  const selection = resolveAiProvider(env);
+  return { user, sessionId, prompt, context: authorizedCatalogContext(catalog), glossary, history, providerId: selection.providerId, model: selection.model, startedAt: Date.now(), signal: request.signal, scope, semanticContext };
 }
 
 async function runAgent(env: Env, prepared: PreparedChat): Promise<AgentResult> {
   let providerRequests = 0;
+  const providerTraces: ProviderTrace[] = [];
   try {
     if (prepared.semanticContext?.status === "ASK") {
       const candidates = prepared.semanticContext.candidates.map((candidate) => ({ label: candidate.label, domain: candidate.domain }));
       const answer = `請釐清您指的是：\n${candidates.map((candidate, index) => `${index + 1}. ${candidate.label}${candidate.domain ? `（${candidate.domain}）` : ""}`).join("\n")}`;
-      const result: AgentResult = { answer, rows: [], rowCount: 0, maskedColumns: [], model: prepared.model, semanticResolution: { status: "ASK", code: prepared.semanticContext.code ?? "SEMANTIC_DOMAIN_AMBIGUOUS", candidates } };
+      const result: AgentResult = { answer, rows: [], rowCount: 0, maskedColumns: [], model: prepared.model, ai: aiRunMetadata(prepared.providerId, prepared.model, providerTraces), semanticResolution: { status: "ASK", code: prepared.semanticContext.code ?? "SEMANTIC_DOMAIN_AMBIGUOUS", candidates } };
       await persistSuccess(env, prepared, result, providerRequests);
       return result;
     }
@@ -276,32 +252,34 @@ async function runAgent(env: Env, prepared: PreparedChat): Promise<AgentResult> 
       { role: "user", content: prepared.prompt },
     ];
     providerRequests += 1;
-    const first = await gatewayCompletion(env, prepared.model, messages, true, prepared.user.id, prepared.sessionId, prepared.signal);
-    const calls = first.tool_calls ?? [];
+    const first = await chatCompletion(env, prepared.model, prepared.providerId, messages, true, prepared.signal);
+    providerTraces.push(first.trace);
+    const calls = first.toolCalls;
     if (calls.length === 0) {
       const answer = first.content?.trim();
       if (!answer) throw new HttpError(502, "AI_INVALID_RESPONSE", "AI returned neither an answer nor a query.");
-      const result: AgentResult = { answer, rows: [], rowCount: 0, maskedColumns: [], model: prepared.model };
+      const result: AgentResult = { answer, rows: [], rowCount: 0, maskedColumns: [], model: prepared.model, ai: aiRunMetadata(prepared.providerId, prepared.model, providerTraces) };
       await persistSuccess(env, prepared, result, providerRequests);
       return result;
     }
-    if (calls.length !== 1) throw new HttpError(502, "AI_INVALID_TOOL", "AI may request only one SQL tool call per turn.");
+    if (calls.length !== 1) throw new HttpError(502, "AI_PROVIDER_INVALID_RESPONSE", "AI may request only one SQL tool call per turn.");
     const validated = await authorizeQuery(env, prepared.scope, toolSql(calls[0]), prepared.user.maxRows);
     await assertNoSensitiveInference(env, validated.originalSql);
     const queryResult = await env.QUERYMIND_DATA.prepare(validated.executionSql).all<Record<string, unknown>>();
     const masked = await maskedQueryRows(env, queryResult.results ?? [], validated.originalSql);
     const modelPreview = boundedResultPreview(masked.rows);
     const toolPayload = JSON.stringify({ rowCount: masked.rows.length, rows: modelPreview, truncatedForModel: masked.rows.length > modelPreview.length });
-    messages.push({ role: "assistant", content: first.content ?? null, tool_calls: calls });
-    messages.push({ role: "tool", tool_call_id: calls[0].id, content: toolPayload });
+    messages.push({ role: "assistant", content: first.content ?? null, toolCalls: calls });
+    messages.push({ role: "tool", toolCallId: calls[0].id, content: toolPayload });
     providerRequests += 1;
-    const final = await gatewayCompletion(env, prepared.model, messages, false, prepared.user.id, prepared.sessionId, prepared.signal);
+    const final = await chatCompletion(env, prepared.model, prepared.providerId, messages, false, prepared.signal);
+    providerTraces.push(final.trace);
     const answer = final.content?.trim();
-    if (!answer || final.tool_calls?.length) throw new HttpError(502, "AI_INVALID_RESPONSE", "AI did not return a final answer after the query.");
+    if (!answer || final.toolCalls.length) throw new HttpError(502, "AI_PROVIDER_INVALID_RESPONSE", "AI did not return a final answer after the query.");
     const queryRunId = crypto.randomUUID();
     const rawSqlAvailable = hasCapability(prepared.user, "view_schema");
     const explainability = buildQueryExplainability({ prompt: prepared.prompt, sql: validated.originalSql, scope: prepared.scope, referencedTables: validated.referencedTables, rowCount: masked.rows.length, truncated: masked.rows.length >= validated.rowCap, maskedColumns: masked.maskedColumns, queryRunId, rawSqlAvailable, semanticContext: prepared.semanticContext });
-    const result: AgentResult = { answer, ...(rawSqlAvailable ? { sql: validated.originalSql } : {}), queryRunId, explainability, rows: masked.rows, rowCount: masked.rows.length, maskedColumns: masked.maskedColumns, model: prepared.model };
+    const result: AgentResult = { answer, ...(rawSqlAvailable ? { sql: validated.originalSql } : {}), queryRunId, explainability, rows: masked.rows, rowCount: masked.rows.length, maskedColumns: masked.maskedColumns, model: prepared.model, ai: aiRunMetadata(prepared.providerId, prepared.model, providerTraces) };
     assertApiResultBudget(result);
     await persistSuccess(env, prepared, result, providerRequests, { sql: validated.originalSql, queryRunId, explainability });
     return result;

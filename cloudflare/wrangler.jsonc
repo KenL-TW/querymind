@@ -20,6 +20,8 @@
     "ENVIRONMENT": "preview",
     "OPENAI_MODEL": "gpt-4o",
     "ALLOWED_OPENAI_MODELS": "gpt-4o,gpt-4o-mini",
+    "AI_PROVIDER": "openai_gateway",
+    "WORKERS_AI_MODEL": "@cf/zai-org/glm-4.7-flash",
     "AI_GATEWAY_URL": "",
     "AI_GATEWAY_BYOK_ALIAS": "",
     "AI_MOCK_MODE": "true",
@@ -58,5 +60,8 @@
     "binding": "ASSETS",
     "run_worker_first": true,
     "not_found_handling": "single-page-application"
+  },
+  "ai": {
+    "binding": "AI"
   }
 }

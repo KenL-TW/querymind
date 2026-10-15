@@ -18,7 +18,7 @@ import { authorizeReadOnlySql } from "../src/lib/query-policy";
 import { type EffectiveScope } from "../src/lib/scope";
 import { assertStaticRuntimeConfiguration } from "../src/lib/runtime-config";
 import { errorResponse, HttpError } from "../src/lib/http";
-import { gatewayCompletion } from "../src/routes/agent";
+import { completeWithAiProvider } from "../src/lib/ai-provider";
 
 const sensitivePolicies: ColumnPolicy[] = [
   { table_name: "customers", column_name: "email", mask_mode: "full" },
@@ -92,13 +92,31 @@ test.describe("production configuration fail-closed gate", () => {
     expect(() => assertStaticRuntimeConfiguration(base)).toThrow(/authentication/i);
     expect(() => assertStaticRuntimeConfiguration({ ...base, AUTH_REQUIRED: "true", AI_MOCK_MODE: "true", AUTH_JWT_SECRET: "x", AUTH_PASSWORD_PEPPER: "x", AUTH_BOOTSTRAP_TOKEN: "x" } as unknown as Env)).toThrow(/mock/i);
   });
+
+  test("requires a valid Workers AI binding when that provider is explicitly selected", () => {
+    const base = {
+      ENVIRONMENT: "production",
+      QUERYMIND_APP: {},
+      QUERYMIND_DATA: {},
+      AUTH_REQUIRED: "true",
+      AUTH_JWT_SECRET: "test-jwt-secret",
+      AUTH_PASSWORD_PEPPER: "test-password-pepper",
+      AUTH_BOOTSTRAP_TOKEN: "test-bootstrap-token",
+      AI_MOCK_MODE: "false",
+      AI_PROVIDER: "workers_ai",
+      WORKERS_AI_MODEL: "@cf/zai-org/glm-4.7-flash",
+      AI: { run: async () => ({ response: "ok" }) },
+    };
+    expect(() => assertStaticRuntimeConfiguration(base as unknown as Env)).not.toThrow();
+    expect(() => assertStaticRuntimeConfiguration({ ...base, AI: undefined } as unknown as Env)).toThrow(/Workers AI binding configuration/i);
+  });
 });
 
 test("model egress redaction removes provider credentials and bearer tokens", () => {
   expect(redactModelText("api_key=sk-abcdefghijklmnop token=secret-value Bearer eyJhbGciOiJIUzI1NiJ9.payload.sig")).toBe("api_key= [REDACTED] token= [REDACTED] Bearer [REDACTED]");
 });
 
-test("AI Gateway failures include a safe reference and log only bounded diagnostics", async () => {
+test("AI provider failures include a safe reference and log only bounded diagnostics", async () => {
   const previousFetch = globalThis.fetch;
   const previousError = console.error;
   const capturedLogs: string[] = [];
@@ -113,26 +131,28 @@ test("AI Gateway failures include a safe reference and log only bounded diagnost
   try {
     let failure: unknown;
     try {
-      await gatewayCompletion({
+      await completeWithAiProvider({
         ENVIRONMENT: "production",
+        AI_PROVIDER: "openai_gateway",
+        OPENAI_MODEL: "gpt-4o",
+        ALLOWED_OPENAI_MODELS: "gpt-4o",
         AI_GATEWAY_URL: "https://gateway.ai.cloudflare.com/v1/account/gateway/openai/chat/completions",
         AI_GATEWAY_TOKEN: "test-gateway-token-long-enough-to-pass",
         AI_GATEWAY_BYOK_ALIAS: "production",
-      } as unknown as Env, "gpt-4o", [{ role: "user", content: privatePromptMarker }], false, "user-id", "session-id", new AbortController().signal);
+      } as unknown as Env, { model: "gpt-4o", messages: [{ role: "user", content: privatePromptMarker }], temperature: 0.1, maxOutputTokens: 50, signal: new AbortController().signal });
     } catch (error) {
       failure = error;
     }
 
     expect(failure).toBeInstanceOf(HttpError);
-    expect(failure).toMatchObject({ status: 502, code: "AI_GATEWAY_ERROR", referenceId: expect.any(String) });
+    expect(failure).toMatchObject({ status: 502, code: "AI_PROVIDER_AUTH", referenceId: expect.any(String) });
     const response = await errorResponse(failure).json() as { error: string; message: string; referenceId: string };
-    expect(response).toMatchObject({ error: "AI_GATEWAY_ERROR", referenceId: (failure as HttpError).referenceId });
+    expect(response).toMatchObject({ error: "AI_PROVIDER_AUTH", referenceId: (failure as HttpError).referenceId });
     expect(JSON.stringify(response)).not.toContain(privatePromptMarker);
     expect(JSON.stringify(response)).not.toContain(privateProviderBody);
     expect(capturedLogs).toHaveLength(1);
-    expect(capturedLogs[0]).toContain('"event":"ai_gateway.request_failed"');
-    expect(capturedLogs[0]).toContain('"upstream_status":401');
-    expect(capturedLogs[0]).toContain('"cloudflare_ray_id":"ray-12345"');
+    expect(capturedLogs[0]).toContain('"event":"ai_provider.failed"');
+    expect(capturedLogs[0]).toContain('"error_code":"AI_PROVIDER_AUTH"');
     expect(capturedLogs[0]).toContain((failure as HttpError).referenceId!);
     expect(capturedLogs.join("\n")).not.toContain(privatePromptMarker);
     expect(capturedLogs.join("\n")).not.toContain(privateProviderBody);

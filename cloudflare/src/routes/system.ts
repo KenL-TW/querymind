@@ -1,14 +1,16 @@
-import { aiAvailability } from "../lib/ai-config";
+import { aiAvailability, resolveAiProvider } from "../lib/ai-config";
 import { requireUser } from "../lib/auth";
 import { json } from "../lib/http";
 
 export async function publicConfiguration(request: Request, env: Env): Promise<Response> {
   await requireUser(request, env);
+  const provider = resolveAiProvider(env);
   return json({
     environment: env.ENVIRONMENT,
     ai: {
       availability: aiAvailability(env),
-      model: env.OPENAI_MODEL,
+      provider: provider.providerId,
+      model: provider.model,
       userRequestsPerHour: Number(env.AI_USER_REQUESTS_PER_HOUR),
       globalRequestsPerDay: Number(env.AI_GLOBAL_REQUESTS_PER_DAY),
       maxPromptCharacters: Number(env.AI_MAX_PROMPT_CHARACTERS),
