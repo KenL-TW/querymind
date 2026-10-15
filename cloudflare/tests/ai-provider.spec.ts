@@ -128,7 +128,7 @@ test.describe("PX-AI-01 provider compatibility", () => {
       }));
       const completion = await completeWithAiProvider(env, {
         model: "@cf/zai-org/glm-4.7-flash",
-        messages: [{ role: "user", content: "READY" }],
+        messages: [{ role: "user", content: "Return exactly: READY" }],
         temperature: 0,
         maxOutputTokens: 8,
         signal: signal(),
@@ -139,18 +139,34 @@ test.describe("PX-AI-01 provider compatibility", () => {
       expect(shape).toMatchObject({
         event: "ai_provider.response_shape",
         provider_id: "workers_ai",
+        root_type: "object",
+        root_is_array: false,
         top_level_keys: ["id", "object", "created", "model", "choices"],
         choices_type: "array",
+        choices_count: 1,
         choice_keys: ["index", "message", "finish_reason"],
         message_keys: ["role", "content"],
+        content_source: "choices[0].message.content",
+        response_type: "absent",
         content_type: "string",
         content_length: secretResponse.length,
+        tool_calls_present: false,
         tool_call_count: 0,
         finish_reason_present: true,
+        finish_reason: "stop",
         usage_present: false,
         usage_keys: [],
       });
       expect(logs.join("\n")).not.toContain(secretResponse);
+      const shapeLogCount = logs.filter((entry) => entry.includes('"event":"ai_provider.response_shape"')).length;
+      await completeWithAiProvider(workersAiEnv(async () => ({ response: "ordinary preview answer" })), {
+        model: "@cf/zai-org/glm-4.7-flash",
+        messages: [{ role: "user", content: "ordinary preview request" }],
+        temperature: 0,
+        maxOutputTokens: 8,
+        signal: signal(),
+      });
+      expect(logs.filter((entry) => entry.includes('"event":"ai_provider.response_shape"'))).toHaveLength(shapeLogCount);
     } finally {
       console.info = previousInfo;
     }
@@ -183,10 +199,11 @@ test.describe("PX-AI-01 provider compatibility", () => {
     expect(completion.trace.tokenUsage).toEqual({ inputTokens: 17, outputTokens: 5, totalTokens: 22 });
   });
 
-  test("empty text is valid, but malformed or unsupported response shapes fail closed", async () => {
-    const invoke = (value: unknown) => completeWithAiProvider(workersAiEnv(async () => value), {
+  test("native text and tool-only completions normalize while empty or malformed output fails closed", async () => {
+    const invoke = (value: unknown, tools?: ProviderTool[]) => completeWithAiProvider(workersAiEnv(async () => value), {
       model: "@cf/zai-org/glm-4.7-flash",
       messages: [{ role: "user", content: "READY" }],
+      ...(tools ? { tools } : {}),
       temperature: 0,
       maxOutputTokens: 8,
       signal: signal(),
@@ -201,11 +218,20 @@ test.describe("PX-AI-01 provider compatibility", () => {
     const nativeWithoutUsage = await invoke({ response: "READY" });
     expect(nativeWithoutUsage).toMatchObject({ content: "READY", toolCalls: [] });
     expect(nativeWithoutUsage.trace).not.toHaveProperty("tokenUsage");
-    await expect(invoke({ response: "" })).resolves.toMatchObject({ content: "", toolCalls: [] });
+    await expect(invoke({ response: "" })).rejects.toMatchObject({ code: "AI_PROVIDER_INVALID_RESPONSE" });
+    await expect(invoke({ response: "   " })).rejects.toMatchObject({ code: "AI_PROVIDER_INVALID_RESPONSE" });
+    await expect(invoke({ response: null })).rejects.toMatchObject({ code: "AI_PROVIDER_INVALID_RESPONSE" });
+    await expect(invoke({ choices: [{ message: { content: null } }] })).rejects.toMatchObject({ code: "AI_PROVIDER_INVALID_RESPONSE" });
+    await expect(invoke({ choices: [{ message: { content: "" } }] })).rejects.toMatchObject({ code: "AI_PROVIDER_INVALID_RESPONSE" });
+    await expect(invoke({ choices: [{ message: { content: { text: "READY" } } }] })).rejects.toMatchObject({ code: "AI_PROVIDER_INVALID_RESPONSE" });
+    const toolOnly = await invoke({ response: null, tool_calls: [{ name: "run_readonly_sql", arguments: { sql: "SELECT id FROM products" } }] }, [tool]);
+    expect(toolOnly).toMatchObject({ content: null, toolCalls: [{ name: "run_readonly_sql" }] });
     await expect(invoke({ choices: "not-an-array" })).rejects.toMatchObject({ code: "AI_PROVIDER_INVALID_RESPONSE" });
     await expect(invoke({ choices: [] })).rejects.toMatchObject({ code: "AI_PROVIDER_INVALID_RESPONSE" });
     await expect(invoke({})).rejects.toMatchObject({ code: "AI_PROVIDER_INVALID_RESPONSE" });
     await expect(invoke({ response: 42 })).rejects.toMatchObject({ code: "AI_PROVIDER_INVALID_RESPONSE" });
+    const unknownFinishReason = await invoke({ response: "READY", finish_reason: "unbounded-provider-value" });
+    expect(unknownFinishReason).not.toHaveProperty("finishReason");
   });
 
   test("C04 canonical Gateway headers contain only product metadata and trace correlation", () => {

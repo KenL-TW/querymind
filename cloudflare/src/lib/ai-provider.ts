@@ -139,6 +139,17 @@ interface NormalizedAiResponse {
   usage?: ProviderTokenUsage;
 }
 
+const WORKERS_AI_FINISH_REASONS = new Set(["stop", "length", "tool_calls", "content_filter", "function_call"]);
+
+function normalizeWorkersAiFinishReason(value: unknown): string | null | undefined {
+  if (value === null) return null;
+  return typeof value === "string" && WORKERS_AI_FINISH_REASONS.has(value) ? value : undefined;
+}
+
+function hasUsableCompletion(content: string | null, toolCalls: ProviderToolCall[]): boolean {
+  return (content !== null && content.trim().length > 0) || toolCalls.length > 0;
+}
+
 function normalizeOpenAiResponse(value: unknown, referenceId: string): NormalizedAiResponse {
   const root = asRecord(value);
   const choices = root?.choices;
@@ -149,10 +160,14 @@ function normalizeOpenAiResponse(value: unknown, referenceId: string): Normalize
     throw providerError("AI_PROVIDER_INVALID_RESPONSE", referenceId);
   }
   const usage = tokenUsage(root?.usage);
+  const content = typeof message.content === "string" ? message.content : null;
+  const toolCalls = normalizeOpenAiToolCalls(message.tool_calls, referenceId);
+  if (!hasUsableCompletion(content, toolCalls)) throw providerError("AI_PROVIDER_INVALID_RESPONSE", referenceId);
+  const finishReason = normalizeWorkersAiFinishReason(choice.finish_reason);
   return {
-    content: typeof message.content === "string" ? message.content : null,
-    toolCalls: normalizeOpenAiToolCalls(message.tool_calls, referenceId),
-    ...(choice.finish_reason === undefined ? {} : { finishReason: typeof choice.finish_reason === "string" ? choice.finish_reason : null }),
+    content,
+    toolCalls,
+    ...(finishReason === undefined ? {} : { finishReason }),
     ...(usage ? { usage } : {}),
   };
 }
@@ -174,12 +189,14 @@ function normalizeWorkersAiResponse(value: unknown, referenceId: string): Normal
     throw providerError("AI_PROVIDER_INVALID_RESPONSE", referenceId);
   }
   const toolCalls = normalizeWorkersAiToolCalls(root.tool_calls, referenceId);
-  if (!hasResponse && toolCalls.length === 0) throw providerError("AI_PROVIDER_INVALID_RESPONSE", referenceId);
+  const content = typeof root.response === "string" ? root.response : null;
+  if (!hasUsableCompletion(content, toolCalls)) throw providerError("AI_PROVIDER_INVALID_RESPONSE", referenceId);
   const usage = tokenUsage(root.usage);
+  const finishReason = normalizeWorkersAiFinishReason(root.finish_reason);
   return {
-    content: typeof root.response === "string" ? root.response : null,
+    content,
     toolCalls,
-    ...(root.finish_reason === undefined ? {} : { finishReason: typeof root.finish_reason === "string" ? root.finish_reason : null }),
+    ...(finishReason === undefined ? {} : { finishReason }),
     ...(usage ? { usage } : {}),
   };
 }
@@ -187,25 +204,62 @@ function normalizeWorkersAiResponse(value: unknown, referenceId: string): Normal
 /** Shape-only Preview diagnostics. Never logs model content, tool arguments, or arbitrary provider keys. */
 function safeWorkersAiResponseShape(value: unknown): Record<string, unknown> {
   const root = asRecord(value);
-  if (!root) return { root_type: value === null ? "null" : Array.isArray(value) ? "array" : typeof value };
+  if (!root) return {
+    root_type: value === null ? "null" : Array.isArray(value) ? "array" : typeof value,
+    root_is_array: Array.isArray(value),
+    top_level_keys: [],
+    choices_type: "absent",
+    choices_count: 0,
+    content_source: "absent",
+    content_type: "absent",
+    tool_calls_present: false,
+    tool_call_count: 0,
+    finish_reason_present: false,
+    usage_present: false,
+    usage_keys: [],
+  };
   const choices = Array.isArray(root.choices) ? root.choices : [];
   const choice = asRecord(choices[0]);
   const message = asRecord(choice?.message);
-  const content = message && Object.hasOwn(message, "content") ? message.content : root.response;
+  const hasMessageContent = Boolean(message && Object.hasOwn(message, "content"));
+  const hasResponse = Object.hasOwn(root, "response");
+  const content = hasMessageContent ? message?.content : root.response;
+  const contentSource = hasMessageContent ? "choices[0].message.content" : hasResponse ? "response" : "absent";
   const toolCalls = message?.tool_calls ?? root.tool_calls;
   const usage = asRecord(root.usage);
+  const safeKeyNames = (record: Record<string, unknown> | null): string[] => record
+    ? Object.keys(record).filter((key) => /^[A-Za-z_][A-Za-z0-9_]{0,63}$/u.test(key)).slice(0, 24)
+    : [];
+  const rawFinishReason = choice && Object.hasOwn(choice, "finish_reason") ? choice.finish_reason : root.finish_reason;
+  const finishReason = normalizeWorkersAiFinishReason(rawFinishReason);
   return {
-    top_level_keys: ["id", "object", "created", "model", "choices", "response", "tool_calls", "usage"].filter((key) => Object.hasOwn(root, key)),
+    root_type: "object",
+    root_is_array: false,
+    top_level_keys: safeKeyNames(root),
     choices_type: Object.hasOwn(root, "choices") ? (Array.isArray(root.choices) ? "array" : typeof root.choices) : "absent",
-    choice_keys: choice ? ["index", "message", "finish_reason", "logprobs"].filter((key) => Object.hasOwn(choice, key)) : [],
-    message_keys: message ? ["role", "content", "tool_calls", "function_call"].filter((key) => Object.hasOwn(message, key)) : [],
+    choices_count: choices.length,
+    choice_keys: safeKeyNames(choice),
+    message_keys: safeKeyNames(message),
+    content_source: contentSource,
+    response_type: !hasResponse ? "absent" : root.response === null ? "null" : typeof root.response,
+    ...(typeof root.response === "string" ? { response_length: root.response.length } : {}),
     content_type: content === null ? "null" : content === undefined ? "absent" : typeof content,
     ...(typeof content === "string" ? { content_length: content.length } : {}),
+    tool_calls_present: (message && Object.hasOwn(message, "tool_calls")) || Object.hasOwn(root, "tool_calls"),
     tool_call_count: Array.isArray(toolCalls) ? toolCalls.length : toolCalls === undefined || toolCalls === null ? 0 : null,
-    finish_reason_present: Boolean(choice && Object.hasOwn(choice, "finish_reason")) || Object.hasOwn(root, "finish_reason"),
+    finish_reason_present: (Boolean(choice && Object.hasOwn(choice, "finish_reason")) || Object.hasOwn(root, "finish_reason")),
+    ...(finishReason !== undefined ? { finish_reason: finishReason } : rawFinishReason === null ? { finish_reason: null } : typeof rawFinishReason === "string" ? { finish_reason: "other" } : {}),
     usage_present: root.usage !== undefined && root.usage !== null,
-    usage_keys: usage ? ["prompt_tokens", "completion_tokens", "total_tokens", "input_tokens", "output_tokens"].filter((key) => Object.hasOwn(usage, key)) : [],
+    usage_keys: safeKeyNames(usage),
   };
+}
+
+function isControlledResponseShapeSmoke(request: ProviderRequest): boolean {
+  return request.messages.length === 1
+    && request.messages[0].role === "user"
+    && request.messages[0].content === "Return exactly: READY"
+    && (!request.tools || request.tools.length === 0)
+    && request.responseFormat === undefined;
 }
 
 function toProviderMessages(messages: ProviderMessage[]): Array<Record<string, unknown>> {
@@ -415,7 +469,7 @@ async function workersAiCompletion(env: Env, request: ProviderRequest, reference
   }
   let raw: unknown;
   try { raw = await raceWorkersAi(pending, request.signal, referenceId); } catch (error) { throw normalizeWorkersAiProviderError(error, referenceId); }
-  if (env.ENVIRONMENT === "preview") {
+  if (env.ENVIRONMENT === "preview" && isControlledResponseShapeSmoke(request)) {
     console.info(JSON.stringify({
       event: "ai_provider.response_shape",
       provider_id: "workers_ai",
