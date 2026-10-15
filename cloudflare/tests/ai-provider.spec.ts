@@ -6,6 +6,9 @@ import { errorResponse, HttpError } from "../src/lib/http";
 import { authorizeReadOnlySql } from "../src/lib/query-policy";
 import type { EffectiveScope } from "../src/lib/scope";
 import { reconstructConversationHistory, type QueryIntent } from "../src/lib/agent-contract";
+import worker from "../src/index";
+import { createAiProviderSmokeHandler } from "../src/routes/ai-provider-smoke";
+import type { AuthenticatedUser } from "../src/lib/auth";
 
 const signal = () => new AbortController().signal;
 const tool: ProviderTool = {
@@ -528,6 +531,145 @@ test.describe("PX-AI-01 provider compatibility", () => {
       expect(publicResponse).not.toContain(providerMarker);
       expect(logs.join("\n")).not.toContain(promptMarker);
       expect(logs.join("\n")).not.toContain(providerMarker);
+    } finally {
+      console.error = previousError;
+    }
+  });
+});
+
+test.describe("Staging direct Workers AI provider smoke", () => {
+  const owner: AuthenticatedUser = {
+    id: "staging-owner",
+    email: "owner@example.test",
+    displayName: "Staging Owner",
+    roleName: "owner",
+    capabilities: ["*"],
+    maxRows: 100,
+    principalType: "session",
+  };
+  const viewer: AuthenticatedUser = { ...owner, id: "staging-viewer", roleName: "viewer", capabilities: ["chat"] };
+  const request = (body = "{}") => new Request("https://querymind-staging.example.test/api/v1/admin/diagnostics/ai-provider-smoke", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body,
+  });
+
+  test("Staging Owner invokes the configured Workers AI adapter once with immutable smoke input", async () => {
+    const calls: Array<{ model: string; input: Record<string, unknown>; options: unknown }> = [];
+    const completionMarker = "private-provider-completion-marker";
+    const promptMarker = "private-client-prompt-marker";
+    const credentialMarker = "private-client-credential-marker";
+    const previousInfo = console.info;
+    const previousError = console.error;
+    const logs: string[] = [];
+    console.info = (...values: unknown[]) => { logs.push(values.map(String).join(" ")); };
+    console.error = (...values: unknown[]) => { logs.push(values.map(String).join(" ")); };
+    try {
+      const env = workersAiEnv(async (model, input, options) => {
+        calls.push({ model, input, options });
+        return { response: "READY", finish_reason: "stop", usage: { prompt_tokens: 4, completion_tokens: 1, total_tokens: 5 }, private_marker: completionMarker };
+      }, { ENVIRONMENT: "staging", AI_MOCK_MODE: "false" });
+      const maliciousBody = JSON.stringify({
+        prompt: promptMarker,
+        provider: "openai_gateway",
+        model: "client-selected-model",
+        tools: [{ name: "client-tool", arguments: credentialMarker }],
+        temperature: 2,
+        maxOutputTokens: 99_999,
+        responseFormat: "json_object",
+      });
+      const handler = createAiProviderSmokeHandler(async () => owner);
+      const response = await handler(request(maliciousBody), env);
+      const payload = await response.json() as Record<string, unknown>;
+      const input = calls[0]?.input ?? {};
+
+      expect(calls).toHaveLength(1);
+      expect(calls[0]?.model).toBe("@cf/zai-org/glm-4.7-flash");
+      expect(input).toMatchObject({
+        messages: [{ role: "user", content: "Return exactly: READY" }],
+        temperature: 0,
+        max_completion_tokens: 800,
+      });
+      expect(input).not.toHaveProperty("tools");
+      expect(input).not.toHaveProperty("response_format");
+      expect(payload).toMatchObject({
+        status: "PASS",
+        provider: "workers_ai",
+        model: "@cf/zai-org/glm-4.7-flash",
+        readyMatched: true,
+        finishReason: "stop",
+        contentLength: 5,
+        referenceId: expect.any(String),
+        latencyMs: expect.any(Number),
+        tokenUsage: { inputTokens: 4, outputTokens: 1, totalTokens: 5 },
+      });
+      expect(response.status).toBe(200);
+      expect(JSON.stringify(payload)).not.toContain(promptMarker);
+      expect(JSON.stringify(payload)).not.toContain(credentialMarker);
+      expect(JSON.stringify(payload)).not.toContain(completionMarker);
+      expect(logs.join("\n")).not.toContain(promptMarker);
+      expect(logs.join("\n")).not.toContain(credentialMarker);
+      expect(logs.join("\n")).not.toContain(completionMarker);
+    } finally {
+      console.info = previousInfo;
+      console.error = previousError;
+    }
+  });
+
+  test("Production route is unavailable before authentication and never invokes a provider", async () => {
+    let providerCalls = 0;
+    const env = workersAiEnv(async () => { providerCalls += 1; return { response: "READY", finish_reason: "stop" }; }, {
+      ENVIRONMENT: "production",
+      AI_MOCK_MODE: "false",
+    });
+    const response = await worker.fetch(request(), env, {} as ExecutionContext);
+    expect(response.status).toBe(404);
+    expect(await response.json()).toMatchObject({ error: "API_NOT_IMPLEMENTED" });
+    expect(providerCalls).toBe(0);
+  });
+
+  test("Viewer and anonymous requests are denied before the provider is invoked", async () => {
+    let providerCalls = 0;
+    const env = workersAiEnv(async () => { providerCalls += 1; return { response: "READY", finish_reason: "stop" }; }, {
+      ENVIRONMENT: "staging",
+      AI_MOCK_MODE: "false",
+    });
+    const viewerHandler = createAiProviderSmokeHandler(async () => viewer);
+    await expect(viewerHandler(request(), env)).rejects.toMatchObject({ status: 403, code: "RBAC_FORBIDDEN" });
+
+    const anonymousHandler = createAiProviderSmokeHandler(async () => { throw new HttpError(401, "AUTH_REQUIRED", "Authentication is required."); });
+    await expect(anonymousHandler(request(), env)).rejects.toMatchObject({ status: 401, code: "AUTH_REQUIRED" });
+
+    const apiKeyHandler = createAiProviderSmokeHandler(async () => ({ ...owner, principalType: "api_key" }));
+    await expect(apiKeyHandler(request(), env)).rejects.toMatchObject({ status: 403, code: "API_KEY_RESTRICTED" });
+    expect(providerCalls).toBe(0);
+  });
+
+  test("Provider failures return only safe taxonomy and bounded metadata", async () => {
+    const upstreamMarker = "private-workers-ai-upstream-marker";
+    const promptMarker = "private-client-prompt-error-marker";
+    const previousError = console.error;
+    const logs: string[] = [];
+    console.error = (...values: unknown[]) => { logs.push(values.map(String).join(" ")); };
+    try {
+      let providerCalls = 0;
+      const env = workersAiEnv(async () => {
+        providerCalls += 1;
+        throw Object.assign(new Error(upstreamMarker), { name: "WorkersAiError", status: 429, code: 3036, requestId: "safe-reference-marker" });
+      }, { ENVIRONMENT: "staging", AI_MOCK_MODE: "false" });
+      const handler = createAiProviderSmokeHandler(async () => owner);
+      const response = await handler(request(JSON.stringify({ prompt: promptMarker })), env);
+      const body = await response.text();
+
+      expect(providerCalls).toBe(1);
+      expect(response.status).toBe(429);
+      expect(body).toContain('"status":"FAIL"');
+      expect(body).toContain('"error":"AI_PROVIDER_QUOTA"');
+      expect(body).toContain('"provider":"workers_ai"');
+      expect(body).not.toContain(upstreamMarker);
+      expect(body).not.toContain(promptMarker);
+      expect(logs.join("\n")).not.toContain(upstreamMarker);
+      expect(logs.join("\n")).not.toContain(promptMarker);
     } finally {
       console.error = previousError;
     }

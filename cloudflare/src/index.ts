@@ -15,6 +15,7 @@ import { acceptInvitation, invitationPreview } from "./routes/invitations";
 import { approveSemanticApi, createSemantic, createSemanticRevisionApi, deactivateSemanticAuthority, emergencyPublishSemanticApi, getSemantic, listSemanticReviews, listSemanticRevisions, listSemantics, patchSemanticRevision, postReviewSemanticApi, rejectSemanticApi, replaceSemanticAuthorityApi, replaceSemanticGovernancePolicyApi, requestSemanticChangesApi, resumeSemanticRuntimeApi, semanticApprovalHistory, semanticApprovalReadiness, semanticGovernanceAuthorities, semanticGovernanceConfig, submitSemanticReview, suspendSemanticRuntimeApi, updateSemanticGovernancePolicy } from "./routes/semantics";
 import { acceptSemanticSuggestionAsDraftApi, dismissSemanticSuggestion, generateSemanticSuggestions, getSemanticSuggestion, listSemanticSuggestions, semanticSuggestionCatalog } from "./routes/semantic-suggestions";
 import { semanticRuntimeReadiness } from "./routes/semantic-runtime-readiness";
+import { aiProviderSmoke } from "./routes/ai-provider-smoke";
 import { adminOverview, auditLog, connectionInfo, createApiKey, createInsight, createInvitation, createTemplate, dashboard, deleteDictionary, deleteInsight, deleteTemplate, exportCsv, listApiKeys, listDictionary, listInsights, listInvitations, listRoles, listTemplates, listUsers, resetUserPassword, revokeApiKey, revokeInvitation, saveDictionary, systemInfo, updateInsight, updateRole, updateTemplate, updateUser } from "./routes/modules";
 
 type HealthDatabase = "ok" | "unavailable";
@@ -69,6 +70,12 @@ async function health(env: Env): Promise<Response> {
 
 async function route(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
+  if (url.pathname === "/api/v1/admin/diagnostics/ai-provider-smoke") {
+    if (env.ENVIRONMENT !== "staging") return json({ error: "API_NOT_IMPLEMENTED", message: "This endpoint is not available." }, 404);
+    if (request.method !== "POST") return json({ error: "METHOD_NOT_ALLOWED", message: "This endpoint accepts POST only." }, 405);
+    assertStaticRuntimeConfiguration(env);
+    return aiProviderSmoke(request, env);
+  }
   if (url.pathname !== "/health") assertStaticRuntimeConfiguration(env);
   if (request.method === "GET" && url.pathname === "/health") return health(env);
   if (request.method === "POST" && url.pathname === "/api/v1/query") return executeQuery(request, env);
