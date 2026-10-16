@@ -11,7 +11,7 @@ import { assertApiResultBudget, boundedResultPreview, MAX_STORED_PREVIEW_ROWS } 
 import { authorizeQuery, executeAfterQueryPolicy } from "../lib/query-policy";
 import { resolveEffectiveScope, type EffectiveScope } from "../lib/scope";
 import { buildQueryExplainability, type QueryExplainability } from "../lib/explainability";
-import { clarificationForIntent, gateQueryIntent, parseQueryIntent, reconstructConversationHistory, RESOLVE_INTENT_TOOL, RUN_SQL_TOOL, type QueryIntent, type StoredConversationMessage, type StoredQueryRun } from "../lib/agent-contract";
+import { clarificationForIntent, diagnoseQueryIntent, gateQueryIntent, parseQueryIntent, reconstructConversationHistory, RESOLVE_INTENT_TOOL, RUN_SQL_TOOL, type QueryIntent, type StoredConversationMessage, type StoredQueryRun } from "../lib/agent-contract";
 
 type ChatMessage = ProviderMessage;
 
@@ -104,6 +104,7 @@ function intentSystemPrompt(): string {
     "You are the QueryMind intent resolver. Do not generate SQL or answer from business data.",
     "Return exactly one resolve_analytics_intent tool call.",
     "For an analytical comparison, require a measure explicitly named by the user in the current or prior user turns, or explicitly defined in approved semantic context.",
+    "For ANALYTICAL intent, copy the exact short measure phrase into both metric and metricEvidence; do not translate, normalize, or infer a different canonical label.",
     "Never infer a measure from vague evaluative language such as best, important, or performance.",
     "For a follow-up, preserve the last user-confirmed measure/target and classify requested changes as a query, so the next stage runs a fresh governed query.",
     "For a simple data lookup without an analytical measure, use LOOKUP and quote the exact requested target.",
@@ -326,6 +327,24 @@ async function runAgent(env: Env, prepared: PreparedChat): Promise<AgentResult> 
     const intentCall = intentCompletion.toolCalls[0];
     const parsedIntent = parseQueryIntent(intentCall);
     if (!parsedIntent) throw new HttpError(502, "AI_PROVIDER_INVALID_RESPONSE", "AI returned an invalid analytics-intent decision.");
+    if (env.ENVIRONMENT === "staging") {
+      const diagnostic = diagnoseQueryIntent(parsedIntent, userEvidence, approvedReferenceEvidence);
+      const safeText = (value: string | null) => value?.replace(/[\u0000-\u001f\u007f]/gu, " ").replace(/\s+/gu, " ").slice(0, 120) ?? null;
+      console.log(JSON.stringify({
+        event: "intent.validation",
+        decision: diagnostic.decision,
+        queryType: diagnostic.queryType,
+        metric: safeText(diagnostic.metric),
+        metricEvidence: safeText(diagnostic.metricEvidence),
+        target: safeText(diagnostic.target),
+        targetEvidence: safeText(diagnostic.targetEvidence),
+        metricEvidencePresentInUserSources: diagnostic.metricEvidencePresentInUserSources,
+        metricEvidencePresentInApprovedReferences: diagnostic.metricEvidencePresentInApprovedReferences,
+        targetEvidencePresentInUserSources: diagnostic.targetEvidencePresentInUserSources,
+        validationOutcome: diagnostic.validationOutcome,
+        validationFailureReason: diagnostic.validationFailureReason,
+      }));
+    }
     const intentGate = gateQueryIntent(parsedIntent, userEvidence, approvedReferenceEvidence);
     if (intentGate.kind === "CLARIFY") {
       const clarificationIntent: QueryIntent = { decision: "CLARIFY", queryType: null, metric: null, metricEvidence: null, target: null, targetEvidence: null };

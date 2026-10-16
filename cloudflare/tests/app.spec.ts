@@ -418,6 +418,7 @@ test.describe("QueryMind product workspace", () => {
       answer: string;
       rows: Array<Record<string, unknown>>;
       rowCount: number;
+      agentContext?: { intentCallId: string; intent: { decision: string; metric: string | null; metricEvidence: string | null; target: string | null; targetEvidence: string | null }; queryCallId?: string; queryRunId?: string };
       explainability: {
         understanding: { metrics: string[]; dimensions: string[]; filters: string[]; timeRange: string | null };
         sources: { tables: Array<{ name: string }>; governance: { scopeApplied: boolean; rowPolicyApplied: boolean; columnPolicyApplied: boolean; dlpApplied: boolean } };
@@ -427,6 +428,12 @@ test.describe("QueryMind product workspace", () => {
     };
     expect(payload.rowCount).toBe(3);
     expect(payload.rows).toHaveLength(3);
+    expect(payload.agentContext).toMatchObject({
+      intent: { decision: "QUERY", metric: "銷售額", metricEvidence: "銷售額", target: "商品", targetEvidence: "商品" },
+    });
+    expect(payload.agentContext?.intentCallId).toBeTruthy();
+    expect(payload.agentContext?.queryCallId).toBeTruthy();
+    expect(payload.agentContext?.queryRunId).toBeTruthy();
     const grounding = numericGroundingSummary(verifyNumericGrounding(payload.answer, { rows: payload.rows, rowCount: payload.rowCount }));
     expect(grounding.unsupportedCount).toBe(0);
     expect(payload.explainability.understanding.metrics).toContain("sales amount");

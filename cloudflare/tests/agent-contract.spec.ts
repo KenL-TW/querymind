@@ -1,5 +1,5 @@
 import { expect, test } from "playwright/test";
-import { gateQueryIntent, numericGroundingSummary, reconstructConversationHistory, verifyNumericGrounding, type QueryIntent } from "../src/lib/agent-contract";
+import { diagnoseQueryIntent, gateQueryIntent, numericGroundingSummary, reconstructConversationHistory, verifyNumericGrounding, type QueryIntent } from "../src/lib/agent-contract";
 import { authorizedCatalogContext, authorizedSchemaCatalog } from "../src/lib/schema-catalog";
 import { executeAfterQueryPolicy, authorizeReadOnlySql } from "../src/lib/query-policy";
 import type { EffectiveScope } from "../src/lib/scope";
@@ -55,6 +55,36 @@ test.describe("PX-AI-01B1 governed intent gate", () => {
     expect(gateQueryIntent(semanticMetric, ["列出結果"], ["gross revenue: SUM(order_items.subtotal)"]).kind).toBe("QUERY");
     const inventedMetric = intent({ decision: "QUERY", queryType: "ANALYTICAL", metric: "銷售額", metricEvidence: "表現最好" });
     expect(gateQueryIntent(inventedMetric, ["哪些商品表現最好？"], []).kind).toBe("CLARIFY");
+  });
+
+  test("provider-canonicalized metric is rejected with an explicit bounded diagnostic", () => {
+    const canonical = intent({ decision: "QUERY", queryType: "ANALYTICAL", metric: "sales amount", metricEvidence: "銷售額", target: "product", targetEvidence: "商品" });
+    const diagnostic = diagnoseQueryIntent(canonical, ["請依商品列出銷售額"], []);
+    expect(diagnostic).toMatchObject({
+      metricEvidencePresentInUserSources: true,
+      targetEvidencePresentInUserSources: true,
+      validationOutcome: "CLARIFY",
+      validationFailureReason: "METRIC_EVIDENCE_CONTRACT_MISMATCH",
+    });
+    expect(gateQueryIntent(canonical, ["請依商品列出銷售額"], []).kind).toBe("CLARIFY");
+  });
+
+  test("vague evaluative evidence cannot be paired with an invented measure", () => {
+    const invented = intent({ decision: "QUERY", queryType: "ANALYTICAL", metric: "sales amount", metricEvidence: "表現最好", target: "product", targetEvidence: "商品" });
+    const diagnostic = diagnoseQueryIntent(invented, ["哪些商品表現最好？"], []);
+    expect(diagnostic).toMatchObject({
+      metricEvidencePresentInUserSources: true,
+      validationOutcome: "CLARIFY",
+      validationFailureReason: "METRIC_EVIDENCE_CONTRACT_MISMATCH",
+    });
+    expect(gateQueryIntent(invented, ["哪些商品表現最好？"], []).kind).toBe("CLARIFY");
+  });
+
+  test("metric evidence absent from current, prior and approved reference sources remains a clarification", () => {
+    const absent = intent({ decision: "QUERY", queryType: "ANALYTICAL", metric: "銷售額", metricEvidence: "銷售額" });
+    const diagnostic = diagnoseQueryIntent(absent, ["列出商品"], ["gross revenue: approved formula"]);
+    expect(diagnostic.validationOutcome).toBe("CLARIFY");
+    expect(diagnostic.validationFailureReason).toBe("METRIC_EVIDENCE_NOT_FOUND");
   });
 });
 

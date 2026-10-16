@@ -21,8 +21,8 @@ export const RESOLVE_INTENT_TOOL: ProviderTool = {
     properties: {
       decision: { type: "string", enum: ["QUERY", "CLARIFY", "CHAT"] },
       queryType: { type: ["string", "null"], enum: ["ANALYTICAL", "LOOKUP", null] },
-      metric: { type: ["string", "null"] },
-      metricEvidence: { type: ["string", "null"], description: "Exact short phrase that states the measure, copied from a user message or approved semantic reference." },
+      metric: { type: ["string", "null"], description: "The exact explicit measure phrase, copied verbatim from user evidence or an approved semantic reference; do not translate or infer it." },
+      metricEvidence: { type: ["string", "null"], description: "The same exact short measure phrase copied verbatim from a user message or approved semantic reference." },
       target: { type: ["string", "null"], description: "The exact subject or grouping target requested by the user, when present." },
       targetEvidence: { type: ["string", "null"], description: "Exact short phrase that names the requested subject or grouping target." },
     },
@@ -80,16 +80,70 @@ export function validateQueryIntent(
   userEvidence: string[],
   approvedReferenceEvidence: string[],
 ): ValidatedQueryIntent | null {
-  if (intent.decision !== "QUERY" || intent.queryType === null) return null;
+  return diagnoseQueryIntent(intent, userEvidence, approvedReferenceEvidence).validationOutcome === "QUERY"
+    ? intent as ValidatedQueryIntent
+    : null;
+}
+
+export type IntentValidationFailureReason =
+  | "MISSING_METRIC"
+  | "MISSING_METRIC_EVIDENCE"
+  | "METRIC_EVIDENCE_CONTRACT_MISMATCH"
+  | "METRIC_EVIDENCE_NOT_FOUND"
+  | "MISSING_TARGET"
+  | "TARGET_EVIDENCE_NOT_FOUND"
+  | "INVALID_INTENT_SHAPE"
+  | null;
+
+export interface IntentDiagnostic {
+  decision: QueryIntent["decision"] | "INVALID";
+  queryType: QueryIntent["queryType"];
+  metric: string | null;
+  metricEvidence: string | null;
+  target: string | null;
+  targetEvidence: string | null;
+  metricEvidencePresentInUserSources: boolean;
+  metricEvidencePresentInApprovedReferences: boolean;
+  targetEvidencePresentInUserSources: boolean;
+  validationOutcome: "QUERY" | "CLARIFY" | "CHAT";
+  validationFailureReason: IntentValidationFailureReason;
+}
+
+export function diagnoseQueryIntent(
+  intent: QueryIntent | null,
+  userEvidence: string[],
+  approvedReferenceEvidence: string[],
+): IntentDiagnostic {
+  const metricEvidencePresentInUserSources = Boolean(intent?.metricEvidence && evidenceIsInSources(intent.metricEvidence, userEvidence));
+  const metricEvidencePresentInApprovedReferences = Boolean(intent?.metricEvidence && evidenceIsInSources(intent.metricEvidence, approvedReferenceEvidence));
+  const targetEvidencePresentInUserSources = Boolean(intent?.targetEvidence && evidenceIsInSources(intent.targetEvidence, userEvidence));
+  const base = {
+    decision: intent?.decision ?? "INVALID" as const,
+    queryType: intent?.queryType ?? null,
+    metric: intent?.metric ?? null,
+    metricEvidence: intent?.metricEvidence ?? null,
+    target: intent?.target ?? null,
+    targetEvidence: intent?.targetEvidence ?? null,
+    metricEvidencePresentInUserSources,
+    metricEvidencePresentInApprovedReferences,
+    targetEvidencePresentInUserSources,
+  };
+  if (!intent) return { ...base, validationOutcome: "CLARIFY", validationFailureReason: "INVALID_INTENT_SHAPE" };
+  if (intent.decision === "CHAT") return { ...base, validationOutcome: "CHAT", validationFailureReason: null };
+  if (intent.decision === "CLARIFY") return { ...base, validationOutcome: "CLARIFY", validationFailureReason: null };
+  if (!intent.queryType) return { ...base, validationOutcome: "CLARIFY", validationFailureReason: "INVALID_INTENT_SHAPE" };
   if (intent.queryType === "ANALYTICAL") {
-    if (!intent.metric || !intent.metricEvidence || normalizeEvidence(intent.metric) !== normalizeEvidence(intent.metricEvidence)) return null;
-    if (!evidenceIsInSources(intent.metricEvidence, userEvidence) && !evidenceIsInSources(intent.metricEvidence, approvedReferenceEvidence)) return null;
+    if (!intent.metric) return { ...base, validationOutcome: "CLARIFY", validationFailureReason: "MISSING_METRIC" };
+    if (!intent.metricEvidence) return { ...base, validationOutcome: "CLARIFY", validationFailureReason: "MISSING_METRIC_EVIDENCE" };
+    if (normalizeEvidence(intent.metric) !== normalizeEvidence(intent.metricEvidence)) return { ...base, validationOutcome: "CLARIFY", validationFailureReason: "METRIC_EVIDENCE_CONTRACT_MISMATCH" };
+    if (!metricEvidencePresentInUserSources && !metricEvidencePresentInApprovedReferences) return { ...base, validationOutcome: "CLARIFY", validationFailureReason: "METRIC_EVIDENCE_NOT_FOUND" };
   }
   if (intent.queryType === "LOOKUP") {
-    if (!intent.target || !intent.targetEvidence || normalizeEvidence(intent.target) !== normalizeEvidence(intent.targetEvidence)) return null;
-    if (!evidenceIsInSources(intent.targetEvidence, userEvidence)) return null;
+    if (!intent.target || !intent.targetEvidence) return { ...base, validationOutcome: "CLARIFY", validationFailureReason: "MISSING_TARGET" };
+    if (normalizeEvidence(intent.target) !== normalizeEvidence(intent.targetEvidence)) return { ...base, validationOutcome: "CLARIFY", validationFailureReason: "INVALID_INTENT_SHAPE" };
+    if (!targetEvidencePresentInUserSources) return { ...base, validationOutcome: "CLARIFY", validationFailureReason: "TARGET_EVIDENCE_NOT_FOUND" };
   }
-  return intent as ValidatedQueryIntent;
+  return { ...base, validationOutcome: "QUERY", validationFailureReason: null };
 }
 
 export type IntentGateDecision =
