@@ -1,5 +1,5 @@
 import { resolveAiProvider, type AiProviderId } from "../lib/ai-config";
-import { completeWithAiProvider, type ProviderCompletion, type ProviderMessage, type ProviderTool, type ProviderToolCall, type ProviderTrace } from "../lib/ai-provider";
+import { completeWithAiProvider, type ProviderCompletion, type ProviderMessage, type ProviderRequest, type ProviderTool, type ProviderToolCall, type ProviderTrace } from "../lib/ai-provider";
 import { hasCapability, requireCapability, requireUser, type AuthenticatedUser } from "../lib/auth";
 import { assertNoSensitiveInference, maskedQueryRows, redactModelText } from "../lib/dlp";
 import { HttpError, json, readJson } from "../lib/http";
@@ -53,6 +53,19 @@ interface AiRunMetadata {
   latencyMs: number;
   references: string[];
   tokenUsage?: { inputTokens: number; outputTokens: number; totalTokens: number };
+}
+
+export type AgentCompletionStage = "intent" | "sql" | "final";
+
+export function buildAgentProviderRequest(
+  request: Omit<ProviderRequest, "temperature" | "maxOutputTokens">,
+  stage: AgentCompletionStage,
+): ProviderRequest {
+  return {
+    ...request,
+    temperature: stage === "intent" ? 0 : 0.1,
+    maxOutputTokens: 800,
+  };
 }
 
 function bodyObject(value: unknown): Record<string, unknown> {
@@ -202,16 +215,14 @@ function mockCompletion(messages: ChatMessage[], providerId: AiProviderId, model
   return { content: null, toolCalls: [{ id: crypto.randomUUID(), name: RUN_SQL_TOOL.name, arguments: JSON.stringify({ sql }) }], trace };
 }
 
-async function chatCompletion(env: Env, model: string, providerId: AiProviderId, messages: ChatMessage[], tools: ProviderTool[] | undefined, toolChoice: "required" | "auto" | undefined, requestSignal: AbortSignal): Promise<ProviderCompletion> {
+async function chatCompletion(env: Env, model: string, providerId: AiProviderId, messages: ChatMessage[], tools: ProviderTool[] | undefined, toolChoice: "required" | "auto" | undefined, requestSignal: AbortSignal, stage: AgentCompletionStage): Promise<ProviderCompletion> {
   if (env.ENVIRONMENT !== "production" && env.AI_MOCK_MODE === "true") return mockCompletion(messages, providerId, model, tools);
-  return completeWithAiProvider(env, {
+  return completeWithAiProvider(env, buildAgentProviderRequest({
     model,
     messages,
     ...(tools ? { tools, toolChoice } : {}),
-    temperature: 0.1,
-    maxOutputTokens: 800,
     signal: requestSignal,
-  });
+  }, stage));
 }
 
 function toolSql(call: ProviderToolCall): string {
@@ -321,7 +332,7 @@ async function runAgent(env: Env, prepared: PreparedChat): Promise<AgentResult> 
       { role: "user", content: prepared.prompt },
     ];
     providerRequests += 1;
-    const intentCompletion = await chatCompletion(env, prepared.model, prepared.providerId, intentMessages, [RESOLVE_INTENT_TOOL], "required", prepared.signal);
+    const intentCompletion = await chatCompletion(env, prepared.model, prepared.providerId, intentMessages, [RESOLVE_INTENT_TOOL], "required", prepared.signal, "intent");
     providerTraces.push(intentCompletion.trace);
     if (intentCompletion.toolCalls.length !== 1) throw new HttpError(502, "AI_PROVIDER_INVALID_RESPONSE", "AI must return one explicit analytics-intent decision.");
     const intentCall = intentCompletion.toolCalls[0];
@@ -374,7 +385,7 @@ async function runAgent(env: Env, prepared: PreparedChat): Promise<AgentResult> 
       { role: "tool", toolCallId: intentCall.id, content: JSON.stringify(resolvedIntent) },
     ];
     providerRequests += 1;
-    const sqlCompletion = await chatCompletion(env, prepared.model, prepared.providerId, messages, [RUN_SQL_TOOL], "required", prepared.signal);
+    const sqlCompletion = await chatCompletion(env, prepared.model, prepared.providerId, messages, [RUN_SQL_TOOL], "required", prepared.signal, "sql");
     providerTraces.push(sqlCompletion.trace);
     if (sqlCompletion.toolCalls.length !== 1) throw new HttpError(502, "AI_PROVIDER_INVALID_RESPONSE", "AI must return one governed SQL request for a resolved data query.");
     const sqlCall = sqlCompletion.toolCalls[0];
@@ -391,7 +402,7 @@ async function runAgent(env: Env, prepared: PreparedChat): Promise<AgentResult> 
     messages.push({ role: "assistant", content: sqlCompletion.content, toolCalls: [sqlCall] });
     messages.push({ role: "tool", toolCallId: sqlCall.id, content: toolPayload });
     providerRequests += 1;
-    const final = await chatCompletion(env, prepared.model, prepared.providerId, messages, undefined, undefined, prepared.signal);
+    const final = await chatCompletion(env, prepared.model, prepared.providerId, messages, undefined, undefined, prepared.signal, "final");
     providerTraces.push(final.trace);
     const answer = final.content?.trim();
     if (!answer || final.toolCalls.length) throw new HttpError(502, "AI_PROVIDER_INVALID_RESPONSE", "AI did not return a final answer after the query.");

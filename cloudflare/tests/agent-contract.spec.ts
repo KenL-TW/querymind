@@ -4,6 +4,7 @@ import { authorizedCatalogContext, authorizedSchemaCatalog } from "../src/lib/sc
 import { executeAfterQueryPolicy, authorizeReadOnlySql } from "../src/lib/query-policy";
 import type { EffectiveScope } from "../src/lib/scope";
 import { publicMessageMetadata } from "../src/lib/sessions";
+import { buildAgentProviderRequest } from "../src/routes/agent";
 
 const ambiguousCases = ["哪些商品表現最好？", "哪個客戶最重要？", "哪個類別最好？"];
 
@@ -28,6 +29,45 @@ const rawCatalog = { tables: { employees: { tableName: "employees", columns: ["i
 function intent(input: Partial<QueryIntent> & Pick<QueryIntent, "decision">): QueryIntent {
   return { queryType: null, metric: null, metricEvidence: null, target: null, targetEvidence: null, ...input };
 }
+
+test.describe("agent stage ProviderRequest temperature", () => {
+  const signal = new AbortController().signal;
+
+  test("uses deterministic intent sampling and preserves SQL/final sampling", () => {
+    const messages = [{ role: "user" as const, content: "請依商品列出銷售額" }];
+    const intentRequest = buildAgentProviderRequest({
+      model: "@cf/zai-org/glm-4.7-flash",
+      messages,
+      tools: [{ name: "resolve_analytics_intent", description: "resolve intent", parameters: { type: "object" } }],
+      toolChoice: "required",
+      signal,
+    }, "intent");
+    expect(intentRequest).toMatchObject({
+      temperature: 0,
+      maxOutputTokens: 800,
+      toolChoice: "required",
+      tools: [{ name: "resolve_analytics_intent" }],
+    });
+
+    const sqlRequest = buildAgentProviderRequest({
+      model: "@cf/zai-org/glm-4.7-flash",
+      messages,
+      tools: [{ name: "run_readonly_sql", description: "run governed SQL", parameters: { type: "object" } }],
+      toolChoice: "required",
+      signal,
+    }, "sql");
+    expect(sqlRequest).toMatchObject({ temperature: 0.1, maxOutputTokens: 800, toolChoice: "required", tools: [{ name: "run_readonly_sql" }] });
+
+    const finalRequest = buildAgentProviderRequest({
+      model: "@cf/zai-org/glm-4.7-flash",
+      messages,
+      signal,
+    }, "final");
+    expect(finalRequest).toMatchObject({ temperature: 0.1, maxOutputTokens: 800 });
+    expect(finalRequest.tools).toBeUndefined();
+    expect(finalRequest.toolChoice).toBeUndefined();
+  });
+});
 
 test.describe("PX-AI-01B1 governed intent gate", () => {
   for (const prompt of ambiguousCases) {
