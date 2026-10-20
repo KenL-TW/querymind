@@ -537,7 +537,7 @@ test.describe("PX-AI-01 provider compatibility", () => {
   });
 });
 
-test.describe("Staging direct Workers AI provider smoke", () => {
+test.describe("Staging direct AI provider smoke", () => {
   const owner: AuthenticatedUser = {
     id: "staging-owner",
     email: "owner@example.test",
@@ -554,7 +554,7 @@ test.describe("Staging direct Workers AI provider smoke", () => {
     body,
   });
 
-  test("Staging Owner invokes the configured Workers AI adapter once with immutable smoke input", async () => {
+  test("Staging Owner invokes the resolved Workers AI adapter once with immutable smoke input", async () => {
     const calls: Array<{ model: string; input: Record<string, unknown>; options: unknown }> = [];
     const completionMarker = "private-provider-completion-marker";
     const promptMarker = "private-client-prompt-marker";
@@ -614,6 +614,76 @@ test.describe("Staging direct Workers AI provider smoke", () => {
       console.info = previousInfo;
       console.error = previousError;
     }
+  });
+
+  test("Staging Owner invokes the resolved OpenAI Gateway adapter once with immutable smoke input", async () => {
+    const calls: Array<{ url: string; headers: Headers; body: Record<string, unknown> }> = [];
+    const promptMarker = "private-client-prompt-openai-marker";
+    const credentialMarker = "private-client-credential-openai-marker";
+    const previousFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      calls.push({
+        url: String(input),
+        headers: new Headers(init?.headers),
+        body: JSON.parse(String(init?.body)) as Record<string, unknown>,
+      });
+      return Response.json({
+        choices: [{ message: { role: "assistant", content: "READY" }, finish_reason: "stop" }],
+        usage: { prompt_tokens: 4, completion_tokens: 1, total_tokens: 5 },
+      });
+    }) as typeof fetch;
+    try {
+      const env = openAiEnv({ ENVIRONMENT: "staging", AI_MOCK_MODE: "false" });
+      const handler = createAiProviderSmokeHandler(async () => owner);
+      const response = await handler(request(JSON.stringify({
+        prompt: promptMarker,
+        provider: "workers_ai",
+        model: "client-selected-model",
+        tools: [{ name: "client-tool", arguments: credentialMarker }],
+        temperature: 2,
+        maxOutputTokens: 99_999,
+      })), env);
+      const payload = await response.json() as Record<string, unknown>;
+
+      expect(calls).toHaveLength(1);
+      expect(calls[0]?.url).toBe(env.AI_GATEWAY_URL);
+      expect(calls[0]?.headers.get("cf-aig-byok-alias")).toBe("production");
+      expect(calls[0]?.body).toMatchObject({
+        model: "gpt-4o",
+        temperature: 0,
+        max_completion_tokens: 800,
+        messages: [{ role: "user", content: "Return exactly: READY" }],
+      });
+      expect(calls[0]?.body).not.toHaveProperty("tools");
+      expect(payload).toMatchObject({
+        status: "PASS",
+        provider: "openai_gateway",
+        model: "gpt-4o",
+        readyMatched: true,
+        finishReason: "stop",
+        contentLength: 5,
+        referenceId: expect.any(String),
+        latencyMs: expect.any(Number),
+        tokenUsage: { inputTokens: 4, outputTokens: 1, totalTokens: 5 },
+      });
+      expect(response.status).toBe(200);
+      expect(JSON.stringify(payload)).not.toContain(promptMarker);
+      expect(JSON.stringify(payload)).not.toContain(credentialMarker);
+    } finally {
+      globalThis.fetch = previousFetch;
+    }
+  });
+
+  test("mock mode remains blocked before a configured provider is invoked", async () => {
+    let providerCalls = 0;
+    const env = workersAiEnv(async () => {
+      providerCalls += 1;
+      return { response: "READY", finish_reason: "stop" };
+    }, { ENVIRONMENT: "staging", AI_MOCK_MODE: "true" });
+    const handler = createAiProviderSmokeHandler(async () => owner);
+
+    await expect(handler(request(), env)).rejects.toMatchObject({ status: 503, code: "AI_PROVIDER_CONFIG" });
+    expect(providerCalls).toBe(0);
   });
 
   test("Production route is unavailable before authentication and never invokes a provider", async () => {

@@ -23,12 +23,11 @@ export function createAiProviderSmokeHandler(authenticate: typeof requireUser = 
     requireBrowserSession(user);
     if (user.principalType !== "session") throw new HttpError(403, "BROWSER_SESSION_REQUIRED", "This diagnostic requires an authenticated browser session.");
     if (user.roleName !== "owner") throw new HttpError(403, "RBAC_FORBIDDEN", "This diagnostic is restricted to the Staging Owner.");
-    if (env.AI_PROVIDER !== "workers_ai" || env.AI_MOCK_MODE !== "false") {
-      throw new HttpError(503, "AI_PROVIDER_CONFIG", "The Staging Workers AI provider is not enabled for live diagnostics.");
+    if (env.AI_MOCK_MODE !== "false") {
+      throw new HttpError(503, "AI_PROVIDER_CONFIG", "The Staging AI provider is not enabled for live diagnostics.");
     }
 
     const selection = resolveAiProvider(env);
-    if (selection.providerId !== "workers_ai") throw new HttpError(503, "AI_PROVIDER_CONFIG", "The Staging Workers AI provider is not enabled for live diagnostics.");
     const startedAt = Date.now();
 
     try {
