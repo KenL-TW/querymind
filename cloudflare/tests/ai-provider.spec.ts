@@ -153,6 +153,43 @@ test.describe("PX-AI-01 provider compatibility", () => {
     expect(() => resolveAiProvider(openAiEnv({ OPENAI_MODEL: "unlisted-model" }))).toThrow(/model configuration is invalid/iu);
   });
 
+  test("Staging model override is allowlisted and Production stays pinned to GLM-4.7-Flash", () => {
+    const candidates = [
+      "@cf/zai-org/glm-4.7-flash",
+      "@cf/qwen/qwen3.8-27b",
+      "@cf/meta/llama-4-scout-17b-16e-instruct",
+      "@cf/deepseek-ai/deepseek-v4-flash-0731",
+      "@cf/zai-org/glm-5.3-flash",
+    ];
+
+    for (const model of candidates) {
+      expect(resolveAiProvider(openAiEnv({
+        ENVIRONMENT: "staging",
+        AI_PROVIDER: "workers_ai",
+        WORKERS_AI_MODEL: model,
+      }))).toEqual({ providerId: "workers_ai", model });
+    }
+
+    expect(resolveAiProvider(openAiEnv({
+      ENVIRONMENT: "production",
+      AI_PROVIDER: "workers_ai",
+      WORKERS_AI_MODEL: "@cf/zai-org/glm-4.7-flash",
+    }))).toEqual({ providerId: "workers_ai", model: "@cf/zai-org/glm-4.7-flash" });
+
+    for (const environment of ["production", "preview"]) {
+      expect(() => resolveAiProvider(openAiEnv({
+        ENVIRONMENT: environment,
+        AI_PROVIDER: "workers_ai",
+        WORKERS_AI_MODEL: "@cf/qwen/qwen3.8-27b",
+      }))).toThrow(/Workers AI model configuration is invalid/iu);
+    }
+    expect(() => resolveAiProvider(openAiEnv({
+      ENVIRONMENT: "staging",
+      AI_PROVIDER: "workers_ai",
+      WORKERS_AI_MODEL: "@cf/attacker/arbitrary-model",
+    }))).toThrow(/Workers AI model configuration is invalid/iu);
+  });
+
   test("C02 preserves OpenAI BYOK and request shape while disabling Gateway payload retention", async () => {
     const previousFetch = globalThis.fetch;
     let capturedUrl = "";

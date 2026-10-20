@@ -9,7 +9,14 @@ export interface AiProviderSelection {
 }
 
 const GATEWAY_PATH = /^\/v1\/[^/]+\/[^/]+\/openai\/chat\/completions$/u;
-const WORKERS_AI_MODEL = "@cf/zai-org/glm-4.7-flash";
+const PRODUCTION_WORKERS_AI_MODEL = "@cf/zai-org/glm-4.7-flash";
+const STAGING_WORKERS_AI_MODELS = new Set([
+  PRODUCTION_WORKERS_AI_MODEL,
+  "@cf/qwen/qwen3.8-27b",
+  "@cf/meta/llama-4-scout-17b-16e-instruct",
+  "@cf/deepseek-ai/deepseek-v4-flash-0731",
+  "@cf/zai-org/glm-5.3-flash",
+]);
 
 export function validGatewayUrl(value: string): boolean {
   try {
@@ -49,7 +56,10 @@ export function resolveAiProvider(env: Env): AiProviderSelection {
   }
   if (providerId === "workers_ai") {
     const model = (env.WORKERS_AI_MODEL ?? "").trim();
-    if (model !== WORKERS_AI_MODEL) {
+    const allowed = env.ENVIRONMENT === "staging"
+      ? STAGING_WORKERS_AI_MODELS.has(model)
+      : model === PRODUCTION_WORKERS_AI_MODEL;
+    if (!allowed) {
       throw new HttpError(503, "AI_PROVIDER_CONFIG", "Workers AI model configuration is invalid.");
     }
     return { providerId, model };
