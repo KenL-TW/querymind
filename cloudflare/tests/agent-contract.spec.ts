@@ -1,5 +1,5 @@
 import { expect, test } from "playwright/test";
-import { diagnoseQueryIntent, gateQueryIntent, numericGroundingSummary, reconstructConversationHistory, verifyNumericGrounding, type QueryIntent } from "../src/lib/agent-contract";
+import { diagnoseQueryIntent, explicitGroupingTarget, gateQueryIntent, numericGroundingSummary, reconstructConversationHistory, verifyNumericGrounding, type QueryIntent } from "../src/lib/agent-contract";
 import { authorizedCatalogContext, authorizedSchemaCatalog } from "../src/lib/schema-catalog";
 import { executeAfterQueryPolicy, authorizeReadOnlySql } from "../src/lib/query-policy";
 import type { EffectiveScope } from "../src/lib/scope";
@@ -70,6 +70,55 @@ test.describe("agent stage ProviderRequest temperature", () => {
 });
 
 test.describe("PX-AI-01B1 governed intent gate", () => {
+  test("extracts only bounded explicit grouping phrases from the current user turn", () => {
+    expect(explicitGroupingTarget("請依商品列出銷售額")).toBe("商品");
+    expect(explicitGroupingTarget("按客戶城市列出銷售額")).toBe("客戶城市");
+    expect(explicitGroupingTarget("按照產品列出銷售額")).toBe("產品");
+    expect(explicitGroupingTarget("以客戶城市分組整理銷售額")).toBe("客戶城市");
+    expect(explicitGroupingTarget("總銷售額是多少？")).toBeNull();
+  });
+
+  test("accepts a fully evidenced explicit product grouping", () => {
+    const proposed = intent({ decision: "QUERY", queryType: "ANALYTICAL", metric: "銷售額", metricEvidence: "銷售額", target: "商品", targetEvidence: "商品" });
+    expect(gateQueryIntent(proposed, ["請依商品列出銷售額"], []).kind).toBe("QUERY");
+  });
+
+  test("fails closed when an explicit grouping is missing from analytical intent", () => {
+    const proposed = intent({ decision: "QUERY", queryType: "ANALYTICAL", metric: "銷售額", metricEvidence: "銷售額" });
+    const diagnostic = diagnoseQueryIntent(proposed, ["請依商品列出銷售額"], []);
+    expect(diagnostic).toMatchObject({ explicitGroupingTarget: "商品", validationOutcome: "CLARIFY", validationFailureReason: "MISSING_GROUPING_TARGET" });
+    expect(gateQueryIntent(proposed, ["請依商品列出銷售額"], []).kind).toBe("CLARIFY");
+  });
+
+  test("rejects a provider target that conflicts with the current explicit grouping", () => {
+    const proposed = intent({ decision: "QUERY", queryType: "ANALYTICAL", metric: "銷售額", metricEvidence: "銷售額", target: "商品", targetEvidence: "商品" });
+    const diagnostic = diagnoseQueryIntent(proposed, ["請依客戶城市列出銷售額"], []);
+    expect(diagnostic).toMatchObject({ explicitGroupingTarget: "客戶城市", validationOutcome: "CLARIFY", validationFailureReason: "EXPLICIT_GROUPING_TARGET_MISMATCH" });
+  });
+
+  test("accepts a fully evidenced customer-city grouping", () => {
+    const proposed = intent({ decision: "QUERY", queryType: "ANALYTICAL", metric: "銷售額", metricEvidence: "銷售額", target: "客戶城市", targetEvidence: "客戶城市" });
+    expect(gateQueryIntent(proposed, ["請依客戶城市列出銷售額"], []).kind).toBe("QUERY");
+  });
+
+  test("does not let date and member filters erase an explicit grouping", () => {
+    const prompt = "請依商品列出 2025-04-03 當天的銷售額，只看「QueryBook Air」";
+    const missingTarget = intent({ decision: "QUERY", queryType: "ANALYTICAL", metric: "銷售額", metricEvidence: "銷售額" });
+    expect(diagnoseQueryIntent(missingTarget, [prompt], []).validationFailureReason).toBe("MISSING_GROUPING_TARGET");
+    const grouped = intent({ decision: "QUERY", queryType: "ANALYTICAL", metric: "銷售額", metricEvidence: "銷售額", target: "商品", targetEvidence: "商品" });
+    expect(gateQueryIntent(grouped, [prompt], []).kind).toBe("QUERY");
+  });
+
+  test("keeps explicitly grounded scalar analytics valid without a target", () => {
+    const proposed = intent({ decision: "QUERY", queryType: "ANALYTICAL", metric: "銷售額", metricEvidence: "銷售額" });
+    expect(gateQueryIntent(proposed, ["總銷售額是多少？"], []).kind).toBe("QUERY");
+  });
+
+  test("keeps C05 ambiguous despite a product noun", () => {
+    const proposed = intent({ decision: "CLARIFY" });
+    expect(gateQueryIntent(proposed, ["哪些商品表現最好？"], []).kind).toBe("CLARIFY");
+  });
+
   for (const prompt of ambiguousCases) {
     test(`ambiguous analytical request does not enter SQL stage: ${prompt}`, () => {
       const proposed = intent({ decision: "QUERY", queryType: "ANALYTICAL", metric: "銷售額", metricEvidence: prompt, target: "商品", targetEvidence: "商品" });
@@ -87,7 +136,10 @@ test.describe("PX-AI-01B1 governed intent gate", () => {
     const quantityTurn = intent({ decision: "QUERY", queryType: "ANALYTICAL", metric: "銷售量", metricEvidence: "銷售量", target: "商品", targetEvidence: "商品" });
     expect(gateQueryIntent(quantityTurn, ["銷售量最高的商品"], []).kind).toBe("QUERY");
     const followUp = intent({ decision: "QUERY", queryType: "ANALYTICAL", metric: "銷售額", metricEvidence: "銷售額", target: "商品", targetEvidence: "商品" });
-    expect(gateQueryIntent(followUp, ["請依商品列出銷售額", "那只看最高的兩個"], []).kind).toBe("QUERY");
+    expect(gateQueryIntent(followUp, ["請依商品列出銷售額", "那只看最高的兩個"], [])).toMatchObject({
+      kind: "QUERY",
+      intent: { decision: "QUERY", queryType: "ANALYTICAL", metric: "銷售額", target: "商品" },
+    });
   });
 
   test("approved reference evidence can resolve a measure, but unsupported inferred evidence cannot", () => {

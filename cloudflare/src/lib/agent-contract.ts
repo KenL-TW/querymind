@@ -23,8 +23,8 @@ export const RESOLVE_INTENT_TOOL: ProviderTool = {
       queryType: { type: ["string", "null"], enum: ["ANALYTICAL", "LOOKUP", null] },
       metric: { type: ["string", "null"], description: "The exact explicit measure phrase, copied verbatim from user evidence or an approved semantic reference; do not translate or infer it." },
       metricEvidence: { type: ["string", "null"], description: "The same exact short measure phrase copied verbatim from a user message or approved semantic reference." },
-      target: { type: ["string", "null"], description: "The exact subject or grouping target requested by the user, when present." },
-      targetEvidence: { type: ["string", "null"], description: "Exact short phrase that names the requested subject or grouping target." },
+      target: { type: ["string", "null"], description: "The exact subject or grouping target requested by the user. For explicit grouping forms such as 依 X 列出 Y, copy exact X." },
+      targetEvidence: { type: ["string", "null"], description: "The same exact short user-evidence phrase that names the requested subject or grouping target. For 依 X 列出 Y, copy exact X." },
     },
     required: ["decision", "queryType", "metric", "metricEvidence", "target", "targetEvidence"],
   },
@@ -44,6 +44,23 @@ export const RUN_SQL_TOOL: ProviderTool = {
 
 function normalizeEvidence(value: string): string {
   return value.normalize("NFKC").toLocaleLowerCase().replace(/\s+/gu, " ").trim();
+}
+
+/**
+ * Extract only a grouping phrase the user explicitly wrote in the current turn.
+ * This is intentionally structural rather than semantic: it does not guess a
+ * metric, target, or database mapping.
+ */
+export function explicitGroupingTarget(currentUserTurn: string): string | null {
+  const patterns = [
+    /(?:請\s*)?(?:按照|依|按)\s*(?<target>[\p{L}\p{N}_\-\s]{1,120}?)\s*(?:列出|顯示|呈現|查詢|整理)/u,
+    /(?:請\s*)?以\s*(?<target>[\p{L}\p{N}_\-\s]{1,120}?)\s*分組/u,
+  ];
+  for (const pattern of patterns) {
+    const target = pattern.exec(currentUserTurn)?.groups?.target?.trim();
+    if (target) return target;
+  }
+  return null;
 }
 
 function parseNullableText(value: unknown, maximum: number): string | null {
@@ -91,7 +108,11 @@ export type IntentValidationFailureReason =
   | "METRIC_EVIDENCE_CONTRACT_MISMATCH"
   | "METRIC_EVIDENCE_NOT_FOUND"
   | "MISSING_TARGET"
+  | "MISSING_GROUPING_TARGET"
+  | "MISSING_TARGET_EVIDENCE"
+  | "TARGET_EVIDENCE_CONTRACT_MISMATCH"
   | "TARGET_EVIDENCE_NOT_FOUND"
+  | "EXPLICIT_GROUPING_TARGET_MISMATCH"
   | "INVALID_INTENT_SHAPE"
   | null;
 
@@ -105,6 +126,7 @@ export interface IntentDiagnostic {
   metricEvidencePresentInUserSources: boolean;
   metricEvidencePresentInApprovedReferences: boolean;
   targetEvidencePresentInUserSources: boolean;
+  explicitGroupingTarget: string | null;
   validationOutcome: "QUERY" | "CLARIFY" | "CHAT";
   validationFailureReason: IntentValidationFailureReason;
 }
@@ -114,6 +136,8 @@ export function diagnoseQueryIntent(
   userEvidence: string[],
   approvedReferenceEvidence: string[],
 ): IntentDiagnostic {
+  const currentUserTurn = userEvidence.at(-1) ?? "";
+  const groupingTarget = explicitGroupingTarget(currentUserTurn);
   const metricEvidencePresentInUserSources = Boolean(intent?.metricEvidence && evidenceIsInSources(intent.metricEvidence, userEvidence));
   const metricEvidencePresentInApprovedReferences = Boolean(intent?.metricEvidence && evidenceIsInSources(intent.metricEvidence, approvedReferenceEvidence));
   const targetEvidencePresentInUserSources = Boolean(intent?.targetEvidence && evidenceIsInSources(intent.targetEvidence, userEvidence));
@@ -127,6 +151,7 @@ export function diagnoseQueryIntent(
     metricEvidencePresentInUserSources,
     metricEvidencePresentInApprovedReferences,
     targetEvidencePresentInUserSources,
+    explicitGroupingTarget: groupingTarget,
   };
   if (!intent) return { ...base, validationOutcome: "CLARIFY", validationFailureReason: "INVALID_INTENT_SHAPE" };
   if (intent.decision === "CHAT") return { ...base, validationOutcome: "CHAT", validationFailureReason: null };
@@ -137,6 +162,13 @@ export function diagnoseQueryIntent(
     if (!intent.metricEvidence) return { ...base, validationOutcome: "CLARIFY", validationFailureReason: "MISSING_METRIC_EVIDENCE" };
     if (normalizeEvidence(intent.metric) !== normalizeEvidence(intent.metricEvidence)) return { ...base, validationOutcome: "CLARIFY", validationFailureReason: "METRIC_EVIDENCE_CONTRACT_MISMATCH" };
     if (!metricEvidencePresentInUserSources && !metricEvidencePresentInApprovedReferences) return { ...base, validationOutcome: "CLARIFY", validationFailureReason: "METRIC_EVIDENCE_NOT_FOUND" };
+    if (groupingTarget) {
+      if (!intent.target) return { ...base, validationOutcome: "CLARIFY", validationFailureReason: "MISSING_GROUPING_TARGET" };
+      if (!intent.targetEvidence) return { ...base, validationOutcome: "CLARIFY", validationFailureReason: "MISSING_TARGET_EVIDENCE" };
+      if (normalizeEvidence(intent.target) !== normalizeEvidence(intent.targetEvidence)) return { ...base, validationOutcome: "CLARIFY", validationFailureReason: "TARGET_EVIDENCE_CONTRACT_MISMATCH" };
+      if (normalizeEvidence(intent.target) !== normalizeEvidence(groupingTarget)) return { ...base, validationOutcome: "CLARIFY", validationFailureReason: "EXPLICIT_GROUPING_TARGET_MISMATCH" };
+      if (!targetEvidencePresentInUserSources) return { ...base, validationOutcome: "CLARIFY", validationFailureReason: "TARGET_EVIDENCE_NOT_FOUND" };
+    }
   }
   if (intent.queryType === "LOOKUP") {
     if (!intent.target || !intent.targetEvidence) return { ...base, validationOutcome: "CLARIFY", validationFailureReason: "MISSING_TARGET" };
